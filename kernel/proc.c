@@ -61,9 +61,8 @@ procinit(void)
 // Must be called with interrupts disabled,
 // to prevent race with process being moved
 // to a different CPU.
-int
-cpuid()
-{
+int cpuid() {
+  // Read the thread pointer
   int id = r_tp();
   return id;
 }
@@ -74,6 +73,7 @@ struct cpu*
 mycpu(void)
 {
   int id = cpuid();
+  // Index and return cpu information
   struct cpu *c = &cpus[id];
   return c;
 }

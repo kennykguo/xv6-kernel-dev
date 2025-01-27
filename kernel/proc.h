@@ -19,10 +19,14 @@ struct context {
 };
 
 // Per-CPU state.
+// WHats going on with the CPU core? 
 struct cpu {
   struct proc *proc;          // The process running on this cpu, or null.
+  // Used to storage registers
   struct context context;     // swtch() here to enter scheduler().
   int noff;                   // Depth of push_off() nesting.
+
+  // Interrupt enble
   int intena;                 // Were interrupts enabled before push_off()?
 };
 

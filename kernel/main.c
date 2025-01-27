@@ -4,21 +4,28 @@
 #include "riscv.h"
 #include "defs.h"
 
+// No such thing as boolean
+// T/F treated as an int
 volatile static int started = 0;
 
 // start() jumps here in supervisor mode on all CPUs.
-void
-main()
-{
+// Actual beginning of the operating system
+// Jump here after mret
+void main() {
+  // 
   if(cpuid() == 0){
     consoleinit();
     printfinit();
     printf("\n");
     printf("xv6 kernel is booting\n");
+
     printf("\n");
     kinit();         // physical page allocator
-    kvminit();       // create kernel page table
+
+
+    kvminit();       // Create kernel page table
     kvminithart();   // turn on paging
+
     procinit();      // process table
     trapinit();      // trap vectors
     trapinithart();  // install kernel trap vector
@@ -31,7 +38,9 @@ main()
     userinit();      // first user process
     __sync_synchronize();
     started = 1;
-  } else {
+  } 
+  
+  else { // If we have not started, spin here
     while(started == 0)
       ;
     __sync_synchronize();

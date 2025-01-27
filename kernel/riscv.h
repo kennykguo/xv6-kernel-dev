@@ -2,8 +2,7 @@
 
 // which hart (core) is this?
 static inline uint64
-r_mhartid()
-{
+r_mhartid() {
   uint64 x;
   asm volatile("csrr %0, mhartid" : "=r" (x) );
   return x;
@@ -17,9 +16,11 @@ r_mhartid()
 #define MSTATUS_MPP_U (0L << 11)
 #define MSTATUS_MIE (1L << 3)    // machine-mode interrupt enable.
 
+// Inline assembly functions
+// Just basic assembly instructions
 static inline uint64
-r_mstatus()
-{
+r_mstatus() {
+  // Get a variable treated as a register
   uint64 x;
   asm volatile("csrr %0, mstatus" : "=r" (x) );
   return x;
@@ -82,8 +83,7 @@ w_sip(uint64 x)
 #define SIE_STIE (1L << 5) // timer
 #define SIE_SSIE (1L << 1) // software
 static inline uint64
-r_sie()
-{
+r_sie() {
   uint64 x;
   asm volatile("csrr %0, sie" : "=r" (x) );
   return x;
@@ -97,9 +97,7 @@ w_sie(uint64 x)
 
 // Machine-mode Interrupt Enable
 #define MIE_STIE (1L << 5)  // supervisor timer
-static inline uint64
-r_mie()
-{
+static inline uint64 r_mie() {
   uint64 x;
   asm volatile("csrr %0, mie" : "=r" (x) );
   return x;
@@ -261,8 +259,7 @@ r_stval()
 }
 
 // Machine-mode Counter-Enable
-static inline void 
-w_mcounteren(uint64 x)
+static inline void w_mcounteren(uint64 x)
 {
   asm volatile("csrw mcounteren, %0" : : "r" (x));
 }

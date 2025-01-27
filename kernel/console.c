@@ -10,7 +10,6 @@
 //
 
 #include <stdarg.h>
-
 #include "types.h"
 #include "param.h"
 #include "spinlock.h"
@@ -135,6 +134,9 @@ consoleread(int user_dst, uint64 dst, int n)
 void
 consoleintr(int c)
 {
+  // Get the lock
+  // UART is memory mapped
+  // Any threads that don't get the lock stay here
   acquire(&cons.lock);
 
   switch(c){
@@ -175,15 +177,19 @@ consoleintr(int c)
     break;
   }
   
+  // Releasing the lock
   release(&cons.lock);
 }
 
-void
-consoleinit(void)
+
+
+void consoleinit(void)
 {
+  
   initlock(&cons.lock, "cons");
 
-  uartinit();
+  uartinit(); // UART is the universal async receiver transmit - transmitting data between 2 directions
+
 
   // connect read and write system calls
   // to consoleread and consolewrite.
