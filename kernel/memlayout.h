@@ -2,13 +2,13 @@
 
 // qemu -machine virt is set up like this,
 // based on qemu's hw/riscv/virt.c:
-//
-// 00001000 -- boot ROM, provided by qemu
-// 02000000 -- CLINT
-// 0C000000 -- PLIC
-// 10000000 -- uart0 
-// 10001000 -- virtio disk 
-// 80000000 -- boot ROM jumps here in machine mode
+// Various addresses map to various addresses in hardware
+// 00001000 -- boot ROM, provided by qemu - Runs when machine powers on
+// 02000000 -- CLINT - Call local interrupter - deals with managing interrupts
+// 0C000000 -- PLIC - 
+// 10000000 -- uart0 - Virtual UART
+// 10001000 -- virtio disk - HDD
+// 80000000 -- boot ROM jumps here in machine mode - RAM
 //             -kernel loads the kernel here
 // unused RAM after 80000000.
 

@@ -44,7 +44,7 @@ void main() {
     while(started == 0)
       ;
     __sync_synchronize();
-    printf("hart %d starting\n", cpuid());
+    printf("hart %d starting\n", cpuid()); // Printf supports dynamic values
     kvminithart();    // turn on paging
     trapinithart();   // install kernel trap vector
     plicinithart();   // ask PLIC for device interrupts

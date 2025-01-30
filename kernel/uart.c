@@ -1,5 +1,9 @@
 //
 // low-level driver routines for 16550a UART.
+// 16550a 0 is a chip - Memory mapped design with registers for control
+// Drivers can be programmed
+// XV6 is designed for a virtual computer, not a physical one
+// qemu is an emulator - Computer has virtual hardware associated iwth it
 //
 
 #include "types.h"
@@ -8,11 +12,14 @@
 #include "riscv.h"
 #include "spinlock.h"
 #include "proc.h"
-#include "defs.h"
+#include "defs.h" 
 
 // the UART control registers are memory-mapped
 // at address UART0. this macro returns the
 // address of one of the registers.
+// Takes base UART addr, and then add reg, then casting to a pointer a memory address -> just a single byte
+// No alignment trouble
+// The keyboard volatile -> tells the compiler to not optimize code utilizing this variable
 #define Reg(reg) ((volatile unsigned char *)(UART0 + (reg)))
 
 // the UART control registers.
@@ -36,7 +43,7 @@
 #define LSR_TX_IDLE (1<<5)    // THR can accept another character to send
 
 #define ReadReg(reg) (*(Reg(reg)))
-#define WriteReg(reg, v) (*(Reg(reg)) = (v))
+#define WriteReg(reg, v) (*(Reg(reg)) = (v)) // Pointer dereference function to translate value into memory address, then write
 
 // the transmit output buffer.
 struct spinlock uart_tx_lock;
@@ -49,32 +56,33 @@ extern volatile int panicked; // from printf.c
 
 void uartstart();
 
-void
-uartinit(void)
-{
+void uartinit(void) {
+
   // disable interrupts.
+  // Write reg -> disable interrupts for the chip, not the CPU
+  // Write to memory address that represents a piece of hardware
   WriteReg(IER, 0x00);
 
   // special mode to set baud rate.
+  // Special value, to change driver behaviour -> line control register
+  // UART is a protocol that wiggles electrical lines up and down. Clock signal is used to signal that data is a certain state. UART has no clock, both sides agree upon fixed time scale - baud rate
   WriteReg(LCR, LCR_BAUD_LATCH);
-
   // LSB for baud rate of 38.4K.
   WriteReg(0, 0x03);
-
   // MSB for baud rate of 38.4K.
   WriteReg(1, 0x00);
 
   // leave set-baud mode,
-  // and set word length to 8 bits, no parity.
+  // and set word length to 8 bits, no parity. Transferred 8 bits at a time, through UART
   WriteReg(LCR, LCR_EIGHT_BITS);
 
-  // reset and enable FIFOs.
+  // reset and enable FIFOs. FIFO Queues DS for data
   WriteReg(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
 
-  // enable transmit and receive interrupts.
-  WriteReg(IER, IER_TX_ENABLE | IER_RX_ENABLE);
+  // enable transmit and receive interrupts. Delivered by device to OS
+  WriteReg(IER, IER_TX_ENABLE | IER_RX_ENABLE); 
 
-  initlock(&uart_tx_lock, "uart");
+  initlock(&uart_tx_lock, "uart"); // Spinlock - only one CPU can interact with UART
 }
 
 // add a character to the output buffer and tell the
@@ -108,10 +116,9 @@ uartputc(int c)
 // use interrupts, for use by kernel printf() and
 // to echo characters. it spins waiting for the uart's
 // output register to be empty.
-void
-uartputc_sync(int c)
+void uartputc_sync(int c)
 {
-  push_off();
+  push_off(); // Disable the interrupts
 
   if(panicked){
     for(;;)
@@ -119,19 +126,20 @@ uartputc_sync(int c)
   }
 
   // wait for Transmit Holding Empty to be set in LSR.
+  // Wait for line status register to set to empty, masking bit for transfer, spin in while loop
   while((ReadReg(LSR) & LSR_TX_IDLE) == 0)
     ;
+  // Transmit holding register
   WriteReg(THR, c);
 
-  pop_off();
+  pop_off(); // Pop off interrupt stack
 }
 
 // if the UART is idle, and a character is waiting
 // in the transmit buffer, send it.
 // caller must hold uart_tx_lock.
 // called from both the top- and bottom-half.
-void
-uartstart()
+void uartstart()
 {
   while(1){
     if(uart_tx_w == uart_tx_r){

@@ -29,13 +29,17 @@
 // called by printf(), and to echo input characters,
 // but not from write().
 //
-void
-consputc(int c)
+void consputc(int c)
 {
+  // Is the character equal to a backspace - 9 bit number
+  // Quite literally implements the "backspace in console"
   if(c == BACKSPACE){
-    // if the user typed backspace, overwrite with a space.
+    // if the user typed backspace, overwrite with a space. 
+    // Moves the cursor backgrounds aswell
+    // Move back, print char, move back to overwrite the character
     uartputc_sync('\b'); uartputc_sync(' '); uartputc_sync('\b');
   } else {
+    // Actually print the character
     uartputc_sync(c);
   }
 }
@@ -188,11 +192,15 @@ void consoleinit(void)
   
   initlock(&cons.lock, "cons");
 
+  // Wires are labelled with receiver and transmitter
   uartinit(); // UART is the universal async receiver transmit - transmitting data between 2 directions
 
 
   // connect read and write system calls
   // to consoleread and consolewrite.
+  // Console is an abstraction over physicial hardware
+  // Just something that you can read and write
+  // Gets abstracted away into an idea of a device
   devsw[CONSOLE].read = consoleread;
   devsw[CONSOLE].write = consolewrite;
 }

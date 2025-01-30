@@ -13,6 +13,9 @@
 #include "stat.h"
 #include "proc.h"
 
+
+// In Unix everything is a file
+// Treat devices as a file
 struct devsw devsw[NDEV];
 struct {
   struct spinlock lock;

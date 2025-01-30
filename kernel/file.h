@@ -31,6 +31,7 @@ struct inode {
 
 // map major device number to device functions.
 // Setup the vitual device properly
+// Can have read and write function
 struct devsw {
   int (*read)(int, uint64, int);
   int (*write)(int, uint64, int); 
@@ -38,4 +39,6 @@ struct devsw {
 
 extern struct devsw devsw[];
 
+
+// Assign to one of the devices in console.c (index 1 in device table)
 #define CONSOLE 1
