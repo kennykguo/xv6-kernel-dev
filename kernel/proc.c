@@ -29,8 +29,7 @@ struct spinlock wait_lock;
 // Allocate a page for each process's kernel stack.
 // Map it high in memory, followed by an invalid
 // guard page.
-void
-proc_mapstacks(pagetable_t kpgtbl)
+void proc_mapstacks(pagetable_t kpgtbl)
 {
   struct proc *p;
   
@@ -39,6 +38,7 @@ proc_mapstacks(pagetable_t kpgtbl)
     if(pa == 0)
       panic("kalloc");
     uint64 va = KSTACK((int) (p - proc));
+    // Map the kernel page table to the virtual address setup for the specific process (64 total), leading to the physical address
     kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
   }
 }

@@ -9,23 +9,22 @@
 /*
  * the kernel's page table.
  */
-pagetable_t kernel_pagetable;
+pagetable_t kernel_pagetable; // Pointer to uint64
 
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
 
 // Make a direct-map page table for the kernel.
-pagetable_t
-kvmmake(void)
+pagetable_t kvmmake(void)
 {
-  pagetable_t kpgtbl;
+  pagetable_t kpgtbl; // Kernel page table
 
-  kpgtbl = (pagetable_t) kalloc();
-  memset(kpgtbl, 0, PGSIZE);
+  kpgtbl = (pagetable_t) kalloc(); // Just allocate a page to this (4KB) converted to a pointer
+  memset(kpgtbl, 0, PGSIZE); // Set everything - all bytes to zero
 
   // uart registers
-  kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+  kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W); // Adds a mapping to the kernel page table
 
   // virtio mmio disk interface
   kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
@@ -34,6 +33,7 @@ kvmmake(void)
   kvmmap(kpgtbl, PLIC, PLIC, 0x4000000, PTE_R | PTE_W);
 
   // map kernel text executable and read-only.
+  // etext is stored in the linker script to get the total amount of kernel code - read, write but NOT executable
   kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
 
   // map kernel data and the physical RAM we'll make use of.
@@ -41,6 +41,7 @@ kvmmake(void)
 
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
+  // Very last page is the trampoline -> mapped to the trampoline - external signal in trampoline.S
   kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 
   // allocate and map a kernel stack for each process.
@@ -50,20 +51,20 @@ kvmmake(void)
 }
 
 // Initialize the one kernel_pagetable
-void
-kvminit(void)
+void kvminit(void)
 {
   kernel_pagetable = kvmmake();
 }
 
 // Switch h/w page table register to the kernel's page table,
 // and enable paging.
-void
-kvminithart()
+void kvminithart()
 {
   // wait for any previous writes to the page table memory to finish.
-  sfence_vma();
+  sfence_vma(); // Guards for changes in the page table
 
+  // BEFORE this runs, we have direct mapping
+  // Once we do this, now we do address translation
   w_satp(MAKE_SATP(kernel_pagetable));
 
   // flush stale entries from the TLB.
@@ -82,13 +83,16 @@ kvminithart()
 //   21..29 -- 9 bits of level-1 index.
 //   12..20 -- 9 bits of level-0 index.
 //    0..11 -- 12 bits of byte offset within the page.
-pte_t *
-walk(pagetable_t pagetable, uint64 va, int alloc)
+// Three level page table
+pte_t * walk(pagetable_t pagetable, uint64 va, int alloc)
 {
+  // Check if we are beyond the largest virtual address
   if(va >= MAXVA)
     panic("walk");
 
+  // Redo the valid check, and allocate page if not valid
   for(int level = 2; level > 0; level--) {
+    // Look inside page table using level and VA to get the index into PTE - PX simply grabs the offset for us
     pte_t *pte = &pagetable[PX(level, va)];
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
@@ -96,6 +100,8 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
         return 0;
       memset(pagetable, 0, PGSIZE);
+
+      // Set the first table entry to be a physical address to a PTE, and set the valid bit
       *pte = PA2PTE(pagetable) | PTE_V;
     }
   }
@@ -128,8 +134,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
 // add a mapping to the kernel page table.
 // only used when booting.
 // does not flush TLB or enable paging.
-void
-kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
+void kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 {
   if(mappages(kpgtbl, va, sz, pa, perm) != 0)
     panic("kvmmap");
@@ -140,8 +145,7 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
 // va and size MUST be page-aligned.
 // Returns 0 on success, -1 if walk() couldn't
 // allocate a needed page-table page.
-int
-mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 {
   uint64 a, last;
   pte_t *pte;
@@ -154,12 +158,13 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
 
   if(size == 0)
     panic("mappages: size");
-  
+     
   a = va;
   last = va + size - PGSIZE;
   for(;;){
-    if((pte = walk(pagetable, a, 1)) == 0)
-      return -1;
+    if((pte = walk(pagetable, a, 1)) == 0) // Walk through the page table
+      return -1; // If walk didn't find an entry, return -1
+    // PTE pointer now points to a valid PTE
     if(*pte & PTE_V)
       panic("mappages: remap");
     *pte = PA2PTE(pa) | perm | PTE_V;

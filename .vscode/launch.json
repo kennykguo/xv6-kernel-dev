@@ -2,12 +2,28 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Launch gdbserver (ARM)",
+      "type": "gdb",
+      "request": "launch",
+      "program": "${workspaceFolder}",
+      "cwd": "${workspaceFolder}",
+      "target": "remote",
+      "miDebuggerServerAddress": "localhost:1234",
+      "setupCommands": [
+        {
+          "text": "target remote :1234",
+          "description": "Connect to gdbserver",
+          "ignoreFailures": false
+        }
+      ]
+    },
+    {
       "name": "C/C++ Runner: Debug Session",
       "type": "lldb",
       "request": "launch",
       "args": [],
-      "cwd": "/Users/kenny/Developer/vscode/xv6-riscv/user",
-      "program": "/Users/kenny/Developer/vscode/xv6-riscv/user/build/Debug/outDebug"
+      "cwd": "/Users/kenny/Developer/vscode/xv6-riscv/kernel",
+      "program": "/Users/kenny/Developer/vscode/xv6-riscv/kernel/build/Debug/outDebug"
     }
   ]
 }
