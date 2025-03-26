@@ -1,6 +1,7 @@
 K=kernel
 U=user
 
+# Define the object files explicitly
 OBJS = \
   $K/entry.o \
   $K/start.o \
@@ -80,6 +81,7 @@ endif
 
 LDFLAGS = -z max-page-size=4096
 
+# LINKER SCRIPT INCLUDED IN BUILD OF KERNEL HERE
 $K/kernel: $(OBJS) $K/kernel.ld $U/initcode
 	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) 
 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
@@ -163,11 +165,25 @@ ifndef CPUS
 CPUS := 3
 endif
 
+
+# -machine virt: QEMU emulates a generic RISC-V virtual machine
+# -bios none: Skip BIOS/firmware loading
+# -kernel $K/kernel: Load the kernel directly at address 0x80000000
+# -m 128M: Allocate 128MB of RAM
+# -smp $(CPUS): Use multiple CPU cores (defaults to 3 in the Makefile)
+# -drive file=fs.img: Use the filesystem image created earlier
+
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
 
+
+# QEMU starts up and emulates a RISC-V machine.
+# QEMU loads the kernel binary at address 0x80000000 (as specified in the linker script).
+# QEMU sets each CPU's program counter to 0x80000000, which points to _entry in entry.S.
+
+# Makes the executable,aswell as the file system
 qemu: $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)
 

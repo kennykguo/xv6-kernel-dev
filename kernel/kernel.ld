@@ -1,5 +1,15 @@
-OUTPUT_ARCH( "riscv" )
-ENTRY( _entry )
+/* A linker script is essentially a set of instructions that 
+tells the linker how to organize the different sections of your
+compiled code into the final executable binary. Let me explain 
+how it works in the context of xv6. */
+
+OUTPUT_ARCH( "riscv" ) /* Output should be for the RISCV architecture */
+ENTRY( _entry ) /* Sets up the entry */
+/* A linker script specifies:
+The memory layout of the final executable
+Where each section should be placed in memory
+The entry point (where execution begins)
+Special symbols that your code can reference */
 
 SECTIONS
 {
@@ -7,8 +17,11 @@ SECTIONS
    * ensure that entry.S / _entry is at 0x80000000,
    * where qemu's -kernel jumps.
    */
+   /* QEMU jumps here when it loads the kernel */
   . = 0x80000000;
 
+  /* Places all .text, .rodata, .data, .bss, parts of object files into this section of the output - also aligns trampoline to a page boundary
+  Ensures kernel also fits into one page  */
   .text : {
     *(.text .text.*)
     . = ALIGN(0x1000);
@@ -19,6 +32,7 @@ SECTIONS
     PROVIDE(etext = .);
   }
 
+  /* Read only data  */
   .rodata : {
     . = ALIGN(16);
     *(.srodata .srodata.*) /* do not need to distinguish this from .rodata */
@@ -40,5 +54,6 @@ SECTIONS
     *(.bss .bss.*)
   }
 
+  /* End of all sections */
   PROVIDE(end = .); /* PROVIDED AS symbol */
 }

@@ -8,11 +8,10 @@
 // T/F treated as an int
 volatile static int started = 0;
 
-// start() jumps here in supervisor mode on all CPUs.
+// start() jumps here in supervisor mode on all CPUs
 // Actual beginning of the operating system
 // Jump here after mret
 void main() {
-  // 
   if(cpuid() == 0){
     consoleinit();
     printfinit();
