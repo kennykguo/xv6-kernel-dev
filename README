@@ -60,3 +60,33 @@ Adding Unix pipes would be educational - this requires implementing a ring buffe
 System Call Extensions
 You could add useful system calls like getpid(), signal handling (kill/signal), or process groups. Each involves understanding the system call interface, trap handling, and process management data structures.
 Which of these areas interests you most? The implementation details vary significantly between each approach.
+
+
+### Questions
+
+cpu0 should get 0 to 4096 still no here?
+
+# get this cpu's hardware thread id (hart id)
+# mhartid is a machine-mode csr (control status register)
+# csrr atomically reads the csr value into a general purpose register
+csrr a1, mhartid
+
+# add 1 to hart id so stack calculation works correctly
+# this ensures cpu 0 gets stack0[4096..8191], cpu 1 gets stack0[8192..12287], etc.
+addi a1, a1, 1
+
+# multiply stack size by (hartid + 1) to get offset for this cpu
+mul a0, a0, a1
+
+# set stack pointer to this cpu's stack area
+# now sp points to the top of this cpu's dedicated stack
+add sp, sp, a0
+
+help me clean up and clean up grammar and make everything concise
+
+entry.S jumps here while running in machine mode after setting up stack, on all cpus
+
+this function configures the risc-v privilege system and jumps to supervisor mode - can you explain if all cores run this
+
+void start()
+

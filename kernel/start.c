@@ -1,115 +1,145 @@
-#include "types.h"  // Defines basic types used throughout the kernel (uint64, etc.)
-#include "param.h"  // Contains kernel parameters like NCPU (number of CPUs)
-#include "memlayout.h" // Defines the memory layout of the system
-#include "riscv.h"  // Contains RISC-V specific functions and definitions
-#include "defs.h"   // Function declarations used throughout the kernel
+#include "types.h"  // defines basic types used throughout the kernel (uint64, etc.)
+#include "param.h"  // contains kernel parameters like NCPU (number of CPUs)
+#include "memlayout.h" // defines the memory layout of the system
+#include "riscv.h"  // contains RISC-V specific functions and definitions
+#include "defs.h"   // function declarations used throughout the kernel
 
-// Forward declaration
+// forward declarations
 void main();
 void timerinit();
 
-// entry.S needs one stack per CPU.
-// This code is running for every CPU! All 8 cores run this at the same time
-// Different by accessing the core id / hart id
-// Direct variable
+// risc-v privilege levels from highest to lowest:
+// machine mode (M) - highest privilege, can access all hardware
+// supervisor mode (S) - OS kernel runs here, limited hardware access  
+// user mode (U) - user programs run here, most restricted
 
-// Variable is used in entry.S
-__attribute__ ((aligned (16))) char stack0[4096 * NCPU];
+// when cpu boots, it starts in machine mode
+// we need to set up the environment and drop to supervisor mode to run the kernel
+// this allows proper isolation between kernel and user programs
+
+// entry.S needs one stack per CPU core
+// this array provides 4096 bytes of stack space per cpu
+// aligned to 16 bytes as required by risc-v calling convention
 
 
-// entry.S jumps here in machine mode on stack0.
-// This function will set the the supervisor level of privilege to run the actual kernel
+
+// gcc compiler attribute that forces memory alignment to 16-byte boundaries
+// this ensures the stack0 array starts at a memory address divisible by 16
+__attribute__ ((aligned (16))) 
+// declares an array of char (1-byte) elements
+char stack0 [4096 * NCPU];
+// array size: 4096 bytes per cpu multiplied by NCPU (number of cpus)
+// creates a contiguous block of memory for all cpu stacks
+// this array gets placed in the .bss section (uninitialized global data)
+
+
+// entry.S jumps here while running in machine mode after setting up stack, on all cpus
+// this function configures the risc-v privilege system and jumps to supervisor mode
+// supervisor mode is where the kernel should run for proper isolation
+// https://github.com/riscv-software-src/opensbi
 void start() {
-  // Overall summary - - - 
-  // The previous privilege level where we came from, is supervisor mode
-  // set M Previous Privilege mode to Supervisor, for mret.
-  // Set the bit representing privilege to supervisior mode
-
-  unsigned long x = r_mstatus(); // Defined in riscv.h, executes an assembly instruction
   
-  // Clear the bits of machine privilege
-  // Clears the MPP (Machine Previous Privilege) bits in the register
-  x &= ~MSTATUS_MPP_MASK;
+    // configure where to return when we execute mret (machine return)
+    // mret will jump to supervisor mode and execute the address in mepc
+    
+    // first, set up mstatus register to control privilege transition
+    unsigned long x = r_mstatus(); // read current machine status register
+    
+    // mstatus.MPP (machine previous privilege) controls what privilege level
+    // we'll be in after executing mret instruction
+    // clear the MPP field (bits 11-12) first
+    x &= ~MSTATUS_MPP_MASK;
+    
+    // set MPP to supervisor mode so mret will jump to supervisor mode
+    x |= MSTATUS_MPP_S;
+    
+    // write back the modified status register
+    w_mstatus(x);
 
-  // Set the bits to be supervisor privilege
-  x |= MSTATUS_MPP_S;
+    // set mepc (machine exception program counter) to main function
+    // when we execute mret, cpu will jump to this address
+    // the medany code model is required because it allows position-independent code
+    w_mepc((uint64)main);
 
-  // Write back to the status register
-  w_mstatus(x);
+    // disable paging initially (virtualization)
+    // we'll enable paging later after setting up page tables
+    // satp (supervisor address translation and protection) controls virtual memory
+    // setting it to 0 disables virtual memory - all addresses are physical
+    // explicitly ensures physical addressing
+    w_satp(0);
 
-  // set M Exception Program Counter to main, for mret (executed later, the CPU will then jump to this address)
-  // The medany code model (specified in compiler flags) is required because it allows the code to access all of memory regardless of where it's placed
-  // requires gcc -mcmodel=medany
-  // Machine exception program counter
-  // Setting the previous instruction to main
-  w_mepc((uint64)main);
+    // delegate interrupts and exceptions to supervisor mode
+    // by default, all traps go to machine mode
+    // but we want the kernel (running in supervisor mode) to handle them
 
-  // Disable paging for now
-  // Address translation - writes a zero turns off virtual memory
-  // Every virtual address is still directly mapped into physical memory
-  w_satp(0);
+    // medeleg = machine exception delegation register (csr 0x302)
+    // controls which exceptions get delegated from machine mode to supervisor mode
+    // each bit corresponds to a specific exception cause number
+    w_medeleg(0xffff); 
 
-  // Delegate all interrupts and exceptions to supervisor mode.
-  // Interrupt and exceptions
-  // Interrupts - done by the kernel
-  // Exceptions - done by user programs
-  // Collectively called traps
-  w_medeleg(0xffff); // Writes to machine exception delegation register - All traps happen in supervisor mode
-  w_mideleg(0xffff); // Delegation register for machine mode exceptions - Delegation register for machine mode exceptions
-  // Writing 0xffff, all refer to an exception that can happen
-  // All traps should be delegated
-  
+    // mideleg = machine interrupt delegation register (csr 0x303) 
+    // controls which interrupts get delegated from machine mode to supervisor mode
+    // each bit corresponds to a specific interrupt cause number
+    w_mideleg(0xffff);
+    
+    // enable interrupts in supervisor mode
+    // sie (supervisor interrupt enable) controls which interrupt types are enabled
+    // enables external, software, timer interrupts
+    // SEIE = supervisor external interrupt enable (devices) bit 
+    // STIE = supervisor timer interrupt enable (for preemptive scheduling) bit
+    // SSIE = supervisor software interrupt enable (inter-processor interrupts) bit
+    w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);
 
-  // Supervisor interrupt enable register - enables specific interrupt types in the OS
-  // Supervisor exception external interrupts, supervisior timer interrupts, supervisor software interrupts
-  w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);
+    // configure physical memory protection (PMP)
+    // by default, supervisor mode cannot access any physical memory
+    // we need to explicitly grant access to all memory
+    // pmpaddr0 sets the address range for PMP region 0
+    // 0x3fffffffffffffull covers all possible physical addresses
+    // stored value: 0x3fffffffffffff  
+    // actual address boundary: 0x3fffffffffffff << 2 = 0xfffffffffffffffc
+    // covers 0x0 to 0xfffffffffffffffc (nearly entire 64-bit address space)
+    w_pmpaddr0(0x3fffffffffffffull);
+    
+    // pmpcfg0 configures permissions for PMP region 0
+    // 0xf = read + write + execute permissions for supervisor mode
+    w_pmpcfg0(0xf);
 
-  // configure Physical Memory Protection to give supervisor mode
-  // access to all of physical memory.
+    // set up timer interrupts for preemptive multitasking
+    // without timer interrupts, processes could run forever without yielding
+    timerinit();
 
-  // Allow supervisor mode to have full access to memory
-  // Sets the address register for PMP region 0 to cover all of memory
-  w_pmpaddr0(0x3fffffffffffffull);
+    // store this cpu's id in thread pointer register for easy access
+    // the kernel frequently needs to know which cpu is running
+    // tp register is accessible from supervisor mode and perfect for this
+    int id = r_mhartid();
+    w_tp(id);
 
-  // Sets the configuration for PMP region 0 to allow full access (read, write, execute) from supervisor mode
-  w_pmpcfg0(0xf);
-
-  // ask for clock interrupts.
-  // Initialize the clock interrupt
-  // Clock allows for context switches
-  timerinit();
-
-  // keep each CPU's hartid in its tp register, for cpuid().
-  // Written to the thread pointer
-  // The hardware thread id is a machine mode register
-  // Supervisor mode always knows which core some sort of code is running on
-  // The thread pointer can be accessed from supervisor mode, allowing the kernel to identify which CPU is executing code
-  int id = r_mhartid();
-  w_tp(id);
-
-  // Switch to supervisor mode and jump to main()
-  // Machine mode return
-  // Return from one privilege level, into another
-  // Looks at previous privilege and mepc
-  // Run at main, set privilege to mstatus
-  // Volatile to prevent the compiler from optimizing away this critical instruction
-  asm volatile("mret");
+    // mret (machine return) instruction:
+    // 1. sets privilege level to value in mstatus.MPP (supervisor mode)
+    // 2. jumps to address in mepc (main function)
+    // 3. enables interrupts if mstatus.MPIE is set
+    asm volatile("mret");
+    
 }
 
-
-// Ask each hart to generate timer interrupts.
-// Use a counter, about 1/10 a second
+// configure timer interrupts for preemptive scheduling
+// timer interrupts are crucial for multitasking - they force running processes
+// to yield cpu periodically so other processes can run
 void timerinit()
 {
-  // Enable supervisor-mode timer interrupts
-  w_mie(r_mie() | MIE_STIE);
-  
-  // Enable the sstc extension (i.e. stimecmp) - set the highest bit of this register to exmaple stimecmp
-  w_menvcfg(r_menvcfg() | (1L << 63)); 
-  
-  // Allow supervisor to use stimecmp and time - Supervisor mode to access time counter
-  w_mcounteren(r_mcounteren() | 2);
-  
-  // Ask for the very first timer interrupt
-  w_stimecmp(r_time() + 1000000);
+    // enable supervisor-mode timer interrupts in machine interrupt enable register
+    w_mie(r_mie() | MIE_STIE);
+    
+    // enable sstc extension (supervisor timer compare)
+    // this allows supervisor mode to directly program timer interrupts
+    w_menvcfg(r_menvcfg() | (1L << 63)); 
+    
+    // allow supervisor mode to access time counter and stimecmp
+    // mcounteren controls which counters supervisor mode can access
+    w_mcounteren(r_mcounteren() | 2);
+    
+    // schedule the first timer interrupt
+    // stimecmp (supervisor timer compare) triggers interrupt when time >= stimecmp
+    // 1000000 cycles is roughly 1/10 second on typical risc-v systems
+    w_stimecmp(r_time() + 1000000);
 }

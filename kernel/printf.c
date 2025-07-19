@@ -197,8 +197,10 @@ void panic(char *s)
     ;
 }
 
+// initialize printf subsystem
+// called early in main() to set up synchronization for printf
 void printfinit(void)
 {
-  initlock(&pr.lock, "pr"); // Start spinlock
-  pr.locking = 1; 
+  initlock(&pr.lock, "pr"); // initialize spinlock for printf synchronization
+  pr.locking = 1; // enable locking to prevent interleaved output from multiple cpus
 }

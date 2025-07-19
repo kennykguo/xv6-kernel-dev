@@ -1,8 +1,7 @@
 #ifndef __ASSEMBLER__
 
 // which hart (core) is this?
-static inline uint64
-r_mhartid() {
+static inline uint64 r_mhartid() {
   uint64 x;
   asm volatile("csrr %0, mhartid" : "=r" (x) );
   return x;
@@ -10,18 +9,36 @@ r_mhartid() {
 
 // Machine Status Register, mstatus
 
-#define MSTATUS_MPP_MASK (3L << 11) // previous mode.
-#define MSTATUS_MPP_M (3L << 11)
-#define MSTATUS_MPP_S (1L << 11)
-#define MSTATUS_MPP_U (0L << 11)
-#define MSTATUS_MIE (1L << 3)    // machine-mode interrupt enable.
+// 3L << 11 = 3 shifted left 11 bits = 6144 decimal = 0x1800 hex
+// binary: 0001100000000000 (bits 12 and 11 set)
+// masks the 2-bit mpp field in mstatus register
+#define MSTATUS_MPP_MASK (3L << 11)
 
-// Inline assembly functions
-// Just basic assembly instructions
-static inline uint64
-r_mstatus() {
-  // Get a variable treated as a register
+// 3L << 11 = 6144 = 0x1800
+// binary: 0001100000000000 (mpp bits = 11 = machine mode)
+#define MSTATUS_MPP_M (3L << 11)
+
+// 1L << 11 = 1 shifted left 11 bits = 2048 decimal = 0x800 hex  
+// binary: 0000100000000000 (mpp bits = 01 = supervisor mode)
+#define MSTATUS_MPP_S (1L << 11)
+
+// 0L << 11 = 0 shifted left 11 bits = 0
+// binary: 0000000000000000 (mpp bits = 00 = user mode)
+#define MSTATUS_MPP_U (0L << 11)
+
+// 1L << 3 = 1 shifted left 3 bits = 8 decimal = 0x8 hex
+// binary: 0000000000001000 (bit 3 set = machine interrupt enable)
+#define MSTATUS_MIE (1L << 3)
+
+
+// inline assembly functions
+static inline uint64 r_mstatus() {
+  // get a variable treated as a register
   uint64 x;
+  // compiler replaces %0 with actual register (e.g., t0)
+  // generates: csrr t0, mstatus
+  // moves t0 content into variable x
+  // function gets inlined at call sites, no actual function call generated
   asm volatile("csrr %0, mstatus" : "=r" (x) );
   return x;
 }
@@ -82,15 +99,14 @@ w_sip(uint64 x)
 #define SIE_SEIE (1L << 9) // external
 #define SIE_STIE (1L << 5) // timer
 #define SIE_SSIE (1L << 1) // software
-static inline uint64
-r_sie() {
+
+static inline uint64 r_sie() {
   uint64 x;
   asm volatile("csrr %0, sie" : "=r" (x) );
   return x;
 }
 
-static inline void 
-w_sie(uint64 x)
+static inline void  w_sie(uint64 x)
 {
   asm volatile("csrw sie, %0" : : "r" (x));
 }
@@ -207,14 +223,12 @@ w_menvcfg(uint64 x)
 }
 
 // Physical Memory Protection
-static inline void
-w_pmpcfg0(uint64 x)
+static inline void w_pmpcfg0(uint64 x)
 {
   asm volatile("csrw pmpcfg0, %0" : : "r" (x));
 }
 
-static inline void
-w_pmpaddr0(uint64 x)
+static inline void w_pmpaddr0(uint64 x)
 {
   asm volatile("csrw pmpaddr0, %0" : : "r" (x));
 }
@@ -313,22 +327,19 @@ r_sp()
 
 // read and write tp, the thread pointer, which xv6 uses to hold
 // this core's hartid (core number), the index into cpus[].
-static inline uint64
-r_tp()
+static inline uint64 r_tp()
 {
   uint64 x;
   asm volatile("mv %0, tp" : "=r" (x) );
   return x;
 }
 
-static inline void 
-w_tp(uint64 x)
+static inline void  w_tp(uint64 x)
 {
   asm volatile("mv tp, %0" : : "r" (x));
 }
 
-static inline uint64
-r_ra()
+static inline uint64 r_ra()
 {
   uint64 x;
   asm volatile("mv %0, ra" : "=r" (x) );

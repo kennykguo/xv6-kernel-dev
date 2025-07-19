@@ -1,3 +1,12 @@
+// process management implementation
+//
+// fundamental concepts:
+// - the kernel maintains arrays of struct proc and struct cpu
+// - processes are allocated from the proc[] array as needed
+// - each cpu core tracks which process it's currently running
+// - context switching allows rapid switching between processes
+// - process IDs (PIDs) are unique identifiers assigned sequentially
+
 #include "types.h"
 #include "param.h"
 #include "memlayout.h"
@@ -6,95 +15,103 @@
 #include "proc.h"
 #include "defs.h"
 
-struct cpu cpus[NCPU];
+// global arrays for all cpus and processes in the system
+struct cpu cpus[NCPU];    // one entry per cpu core
+struct proc proc[NPROC];  // process table - all processes in system
 
-struct proc proc[NPROC];
+struct proc *initproc;    // pointer to the init process (pid 1)
 
-struct proc *initproc;
-
+// pid allocation - ensures each process gets a unique identifier
 int nextpid = 1;
-struct spinlock pid_lock;
+struct spinlock pid_lock;  // protects nextpid from race conditions
 
 extern void forkret(void);
 static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
-// helps ensure that wakeups of wait()ing
-// parents are not lost. helps obey the
-// memory model when using p->parent.
-// must be acquired before any p->lock.
+// helps ensure that wakeups of wait()ing parents are not lost
+// helps obey the memory model when using p->parent
+// must be acquired before any p->lock
 struct spinlock wait_lock;
 
-// Allocate a page for each process's kernel stack.
-// Map it high in memory, followed by an invalid
-// guard page.
+// allocate a page for each process's kernel stack
+// map it high in memory, followed by an invalid guard page
+// called during kernel initialization to set up kernel stacks
 void proc_mapstacks(pagetable_t kpgtbl)
 {
   struct proc *p;
   
+  // iterate through all possible processes
   for(p = proc; p < &proc[NPROC]; p++) {
+    // allocate one physical page for this process's kernel stack
     char *pa = kalloc();
     if(pa == 0)
       panic("kalloc");
+      
+    // calculate virtual address for this process's kernel stack
+    // KSTACK() places stacks high in virtual memory with guard pages between them
     uint64 va = KSTACK((int) (p - proc));
-    // Map the kernel page table to the virtual address setup for the specific process (64 total), leading to the physical address
+    
+    // map the physical page into kernel page table at calculated virtual address
+    // PTE_R | PTE_W makes the stack readable and writable
     kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
   }
 }
 
-// initialize the proc table.
-void
-procinit(void)
+// initialize the process table
+// called once during kernel startup
+void procinit(void)
 {
   struct proc *p;
   
-  initlock(&pid_lock, "nextpid");
-  initlock(&wait_lock, "wait_lock");
+  // initialize locks for process management
+  initlock(&pid_lock, "nextpid");    // protects pid allocation
+  initlock(&wait_lock, "wait_lock"); // coordinates parent/child relationships
+  
+  // initialize each process slot in the process table
   for(p = proc; p < &proc[NPROC]; p++) {
-      initlock(&p->lock, "proc");
-      p->state = UNUSED;
-      p->kstack = KSTACK((int) (p - proc));
+      initlock(&p->lock, "proc");           // protects individual process fields
+      p->state = UNUSED;                    // mark slot as available
+      p->kstack = KSTACK((int) (p - proc)); // remember kernel stack virtual address
   }
 }
 
-// Must be called with interrupts disabled,
-// to prevent race with process being moved
-// to a different CPU.
+// get the current cpu's ID (hardware thread ID)
+// must be called with interrupts disabled to prevent migration to different cpu
 int cpuid() {
-  // Read the thread pointer
+  // read thread pointer register set during boot
   int id = r_tp();
   return id;
 }
 
-// Return this CPU's cpu struct.
-// Interrupts must be disabled.
-struct cpu*
-mycpu(void)
+// return this cpu's cpu struct
+// interrupts must be disabled to ensure we don't migrate to different cpu
+struct cpu* mycpu(void)
 {
   int id = cpuid();
-  // Index and return cpu information
-  struct cpu *c = &cpus[id];
+  struct cpu *c = &cpus[id];  // index into global cpu array
   return c;
 }
 
-// Return the current struct proc *, or zero if none.
-struct proc*
-myproc(void)
+// return the current process, or zero if none
+// used throughout kernel to identify which process is running
+struct proc* myproc(void)
 {
-  push_off();
-  struct cpu *c = mycpu();
-  struct proc *p = c->proc;
-  pop_off();
+  push_off();                // disable interrupts
+  struct cpu *c = mycpu();   // get current cpu
+  struct proc *p = c->proc;  // get process running on this cpu
+  pop_off();                 // re-enable interrupts
   return p;
 }
 
-int
-allocpid()
+// allocate a unique process ID
+// uses simple counter with spinlock for thread safety
+int allocpid()
 {
   int pid;
   
-  acquire(&pid_lock);
+  acquire(&pid_lock);  // ensure atomic update of nextpid
   pid = nextpid;
   nextpid = nextpid + 1;
   release(&pid_lock);
@@ -102,37 +119,40 @@ allocpid()
   return pid;
 }
 
-// Look in the process table for an UNUSED proc.
-// If found, initialize state required to run in the kernel,
-// and return with p->lock held.
-// If there are no free procs, or a memory allocation fails, return 0.
-static struct proc*
-allocproc(void)
+// look in the process table for an UNUSED proc
+// if found, initialize state required to run in the kernel,
+// and return with p->lock held
+// if there are no free procs, or a memory allocation fails, return 0
+static struct proc* allocproc(void)
 {
   struct proc *p;
 
+  // search through process table for an unused slot
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if(p->state == UNUSED) {
-      goto found;
+      goto found;  // found an available process slot
     } else {
-      release(&p->lock);
+      release(&p->lock);  // this slot is in use, keep searching
     }
   }
-  return 0;
+  return 0;  // no free process slots available
 
 found:
-  p->pid = allocpid();
-  p->state = USED;
+  // initialize the new process
+  p->pid = allocpid();  // assign unique process ID
+  p->state = USED;      // mark as allocated but not yet runnable
 
-  // Allocate a trapframe page.
+  // allocate a trapframe page - holds saved user registers
+  // this page will be mapped in user virtual address space
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
     release(&p->lock);
     return 0;
   }
 
-  // An empty user page table.
+  // create an empty user page table for this process
+  // each process gets its own virtual address space
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
     freeproc(p);
@@ -140,13 +160,13 @@ found:
     return 0;
   }
 
-  // Set up new context to start executing at forkret,
-  // which returns to user space.
+  // set up new context to start executing at forkret,
+  // which will return to user space
   memset(&p->context, 0, sizeof(p->context));
-  p->context.ra = (uint64)forkret;
-  p->context.sp = p->kstack + PGSIZE;
+  p->context.ra = (uint64)forkret;    // return address = forkret function
+  p->context.sp = p->kstack + PGSIZE; // stack pointer = top of kernel stack
 
-  return p;
+  return p;  // return new process with lock held
 }
 
 // free a proc structure and the data hanging from it,
@@ -434,141 +454,154 @@ wait(uint64 addr)
   }
 }
 
-// Per-CPU process scheduler.
-// Each CPU calls scheduler() after setting itself up.
-// Scheduler never returns.  It loops, doing:
-//  - choose a process to run.
-//  - swtch to start running that process.
-//  - eventually that process transfers control
-//    via swtch back to the scheduler.
-void
-scheduler(void)
+// per-CPU process scheduler
+// each CPU calls scheduler() after setting itself up
+// scheduler never returns - it loops forever doing:
+//  - choose a process to run (round-robin selection)
+//  - swtch to start running that process  
+//  - eventually that process transfers control back via swtch to the scheduler
+//
+// this is the heart of the operating system - it implements multitasking
+// by rapidly switching between processes, giving each one a time slice
+void scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
 
-  c->proc = 0;
+  c->proc = 0;  // no process currently running on this cpu
+  
+  // infinite loop - scheduler runs forever
   for(;;){
-    // The most recent process to run may have had interrupts
-    // turned off; enable them to avoid a deadlock if all
-    // processes are waiting.
+    // enable interrupts to avoid deadlock if all processes are waiting
+    // the most recent process to run may have had interrupts turned off
     intr_on();
 
-    int found = 0;
+    int found = 0;  // track whether we found a runnable process
+    
+    // scan through entire process table looking for runnable processes
+    // this is simple round-robin scheduling - not sophisticated but fair
     for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
+      acquire(&p->lock);  // protect process state from concurrent modification
+      
       if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
+        // found a process ready to run!
+        
+        // switch to chosen process - it is the process's job
         // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
+        // before jumping back to us
+        p->state = RUNNING;  // mark process as currently running
+        c->proc = p;         // tell this cpu which process it's running
+        
+        // perform the context switch!
+        // save scheduler's registers in c->context
+        // load process's registers from p->context
+        // execution continues wherever the process last yielded
         swtch(&c->context, &p->context);
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
+        // when we get here, the process has yielded back to scheduler
+        // process is done running for now
+        // it should have changed its p->state before coming back
+        c->proc = 0;  // no longer running any process
+        found = 1;    // we found and ran a process
       }
       release(&p->lock);
     }
+    
+    // if no runnable processes found, wait for interrupt
+    // wfi (wait for interrupt) puts cpu in low-power state until interrupt arrives
+    // interrupts might wake up sleeping processes or signal completion of i/o
     if(found == 0) {
-      // nothing to run; stop running on this core until an interrupt.
-      intr_on();
-      asm volatile("wfi");
+      intr_on();          // ensure interrupts are enabled
+      asm volatile("wfi"); // wait for interrupt (low power mode)
     }
   }
 }
 
-// Switch to scheduler.  Must hold only p->lock
-// and have changed proc->state. Saves and restores
-// intena because intena is a property of this
-// kernel thread, not this CPU. It should
-// be proc->intena and proc->noff, but that would
-// break in the few places where a lock is held but
-// there's no process.
-void
-sched(void)
+// switch to scheduler - must hold only p->lock and have changed proc->state
+// saves and restores interrupt enable state because intena is a property of this
+// kernel thread, not this CPU. it should be proc->intena and proc->noff, but that would
+// break in the few places where a lock is held but there's no process
+void sched(void)
 {
   int intena;
   struct proc *p = myproc();
 
+  // sanity checks to catch programming errors
   if(!holding(&p->lock))
-    panic("sched p->lock");
+    panic("sched p->lock");       // must hold process lock
   if(mycpu()->noff != 1)
-    panic("sched locks");
+    panic("sched locks");         // must hold exactly one lock
   if(p->state == RUNNING)
-    panic("sched running");
+    panic("sched running");       // process state must be changed before calling sched
   if(intr_get())
-    panic("sched interruptible");
+    panic("sched interruptible"); // interrupts must be disabled
 
+  // save interrupt enable state and perform context switch
   intena = mycpu()->intena;
-  swtch(&p->context, &mycpu()->context);
-  mycpu()->intena = intena;
+  swtch(&p->context, &mycpu()->context);  // switch from process to scheduler
+  mycpu()->intena = intena;  // restore interrupt enable state
 }
 
-// Give up the CPU for one scheduling round.
-void
-yield(void)
+// give up the CPU for one scheduling round
+// called when process wants to voluntarily yield (be nice to other processes)
+void yield(void)
 {
   struct proc *p = myproc();
-  acquire(&p->lock);
-  p->state = RUNNABLE;
-  sched();
-  release(&p->lock);
+  acquire(&p->lock);     // protect process state
+  p->state = RUNNABLE;   // mark as ready to run (not currently running)
+  sched();               // switch to scheduler
+  release(&p->lock);     // release lock when we resume
 }
 
-// A fork child's very first scheduling by scheduler()
-// will swtch to forkret.
-void
-forkret(void)
+// a fork child's very first scheduling by scheduler() will swtch to forkret
+// this function completes the setup of a new process
+void forkret(void)
 {
-  static int first = 1;
+  static int first = 1;  // track first process creation
 
-  // Still holding p->lock from scheduler.
+  // still holding p->lock from scheduler
   release(&myproc()->lock);
 
   if (first) {
-    // File system initialization must be run in the context of a
+    // file system initialization must be run in the context of a
     // regular process (e.g., because it calls sleep), and thus cannot
-    // be run from main().
+    // be run from main()
     fsinit(ROOTDEV);
 
     first = 0;
-    // ensure other cores see first=0.
+    // ensure other cores see first=0
     __sync_synchronize();
   }
 
+  // jump to user space for the first time
   usertrapret();
 }
 
-// Atomically release lock and sleep on chan.
-// Reacquires lock when awakened.
-void
-sleep(void *chan, struct spinlock *lk)
+// atomically release lock and sleep on chan
+// reacquires lock when awakened
+// this is how processes wait for events (i/o completion, etc.)
+void sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
   
-  // Must acquire p->lock in order to
-  // change p->state and then call sched.
-  // Once we hold p->lock, we can be
-  // guaranteed that we won't miss any wakeup
-  // (wakeup locks p->lock),
-  // so it's okay to release lk.
+  // must acquire p->lock in order to change p->state and then call sched
+  // once we hold p->lock, we can be guaranteed that we won't miss any wakeup
+  // (wakeup locks p->lock), so it's okay to release lk
 
-  acquire(&p->lock);  //DOC: sleeplock1
-  release(lk);
+  acquire(&p->lock);  // protect process state changes
+  release(lk);        // release the lock we were holding
 
-  // Go to sleep.
-  p->chan = chan;
-  p->state = SLEEPING;
+  // go to sleep
+  p->chan = chan;        // remember what we're waiting for
+  p->state = SLEEPING;   // mark as sleeping (not runnable)
 
-  sched();
+  sched();  // switch to scheduler (process won't run until woken up)
 
-  // Tidy up.
-  p->chan = 0;
+  // when we get here, someone called wakeup(chan) and scheduler picked us to run
+  // tidy up
+  p->chan = 0;  // no longer waiting for anything
 
-  // Reacquire original lock.
+  // reacquire original lock before returning
   release(&p->lock);
   acquire(lk);
 }

@@ -187,20 +187,21 @@ consoleintr(int c)
 
 
 
+// initialize console hardware and connect it to the file system
+// called early in main() so printf can work for debugging messages
 void consoleinit(void)
 {
-  
+  // initialize the console lock to synchronize access between cpus
   initlock(&cons.lock, "cons");
 
-  // Wires are labelled with receiver and transmitter
-  uartinit(); // UART is the universal async receiver transmit - transmitting data between 2 directions
+  // initialize the uart hardware for serial communication
+  // uart (universal asynchronous receiver/transmitter) handles serial i/o
+  // this sets up the 16550a uart chip emulated by qemu
+  uartinit(); 
 
-
-  // connect read and write system calls
-  // to consoleread and consolewrite.
-  // Console is an abstraction over physicial hardware
-  // Just something that you can read and write
-  // Gets abstracted away into an idea of a device
+  // connect read and write system calls to console functions
+  // devsw is the device switch table that maps device numbers to driver functions
+  // this makes the console accessible as file descriptor 0, 1, 2 (stdin, stdout, stderr)
   devsw[CONSOLE].read = consoleread;
   devsw[CONSOLE].write = consolewrite;
 }

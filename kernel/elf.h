@@ -2,7 +2,7 @@
 
 #define ELF_MAGIC 0x464C457FU  // "\x7FELF" in little endian
 
-// File header
+// file header
 struct elfhdr {
   uint magic;  // must equal ELF_MAGIC
   uchar elf[12];
@@ -21,7 +21,7 @@ struct elfhdr {
   ushort shstrndx;
 };
 
-// Program section header
+// program section header
 struct proghdr {
   uint32 type;
   uint32 flags;

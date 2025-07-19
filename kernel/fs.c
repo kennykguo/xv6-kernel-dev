@@ -1,13 +1,18 @@
-// File system implementation.  Five layers:
-//   + Blocks: allocator for raw disk blocks.
-//   + Log: crash recovery for multi-step updates.
-//   + Files: inode allocator, reading, writing, metadata.
-//   + Directories: inode with special contents (list of other inodes!)
-//   + Names: paths like /usr/rtm/xv6/fs.c for convenient naming.
+// file system implementation - five layer architecture:
+//   + blocks: allocator for raw disk blocks (balloc/bfree)
+//   + log: crash recovery for multi-step updates (provides atomicity)
+//   + files: inode allocator, reading, writing, metadata (ialloc/iread/iwrite)
+//   + directories: inodes with special contents (list of other inodes!)
+//   + names: paths like /usr/rtm/xv6/fs.c for convenient naming (namei)
 //
-// This file contains the low-level file system manipulation
-// routines.  The (higher-level) system call implementations
-// are in sysfile.c.
+// this file contains the low-level file system manipulation routines
+// the (higher-level) system call implementations are in sysfile.c
+//
+// key concepts:
+// - all file system operations must be atomic (succeed completely or fail completely)
+// - the log provides crash recovery by staging writes before committing them
+// - block allocation uses a free bitmap to track available disk blocks
+// - inodes are allocated from a fixed pool and cached in memory for performance
 
 #include "types.h"
 #include "riscv.h"
@@ -22,86 +27,90 @@
 #include "file.h"
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
-// there should be one superblock per disk device, but we run with
-// only one device
+
+// there should be one superblock per disk device, but we run with only one device
 struct superblock sb; 
 
-// Read the super block.
-static void
-readsb(int dev, struct superblock *sb)
+// read the super block from disk
+// the superblock is stored at block 1 and contains file system metadata
+static void readsb(int dev, struct superblock *sb)
 {
   struct buf *bp;
 
-  bp = bread(dev, 1);
-  memmove(sb, bp->data, sizeof(*sb));
-  brelse(bp);
+  bp = bread(dev, 1);  // read block 1 (superblock) from device
+  memmove(sb, bp->data, sizeof(*sb));  // copy superblock data
+  brelse(bp);  // release buffer
 }
 
-// Init fs
-void
-fsinit(int dev) {
-  readsb(dev, &sb);
+// initialize the file system
+// called during kernel startup to read superblock and initialize log
+void fsinit(int dev) {
+  readsb(dev, &sb);  // read superblock from disk
   if(sb.magic != FSMAGIC)
-    panic("invalid file system");
-  initlog(dev, &sb);
+    panic("invalid file system");  // verify this is a valid xv6 file system
+  initlog(dev, &sb);  // initialize the crash recovery log
 }
 
-// Zero a block.
-static void
-bzero(int dev, int bno)
+// zero a block on disk
+// used when allocating new blocks to ensure they contain no old data
+static void bzero(int dev, int bno)
 {
   struct buf *bp;
 
-  bp = bread(dev, bno);
-  memset(bp->data, 0, BSIZE);
-  log_write(bp);
-  brelse(bp);
+  bp = bread(dev, bno);    // read the block into buffer cache
+  memset(bp->data, 0, BSIZE);  // clear the block contents
+  log_write(bp);  // write through log for crash safety
+  brelse(bp);     // release buffer
 }
 
-// Blocks.
+// block allocation and deallocation
+// the file system uses a bitmap to track which blocks are free/allocated
+// each bit in the bitmap represents one data block
 
-// Allocate a zeroed disk block.
-// returns 0 if out of disk space.
-static uint
-balloc(uint dev)
+// allocate a zeroed disk block
+// returns block number of allocated block, or 0 if out of disk space
+static uint balloc(uint dev)
 {
   int b, bi, m;
   struct buf *bp;
 
   bp = 0;
+  // scan through all bitmap blocks looking for a free bit
   for(b = 0; b < sb.size; b += BPB){
-    bp = bread(dev, BBLOCK(b, sb));
+    bp = bread(dev, BBLOCK(b, sb));  // read bitmap block
+    
+    // check each bit in this bitmap block
     for(bi = 0; bi < BPB && b + bi < sb.size; bi++){
-      m = 1 << (bi % 8);
-      if((bp->data[bi/8] & m) == 0){  // Is block free?
-        bp->data[bi/8] |= m;  // Mark block in use.
-        log_write(bp);
-        brelse(bp);
-        bzero(dev, b + bi);
-        return b + bi;
+      m = 1 << (bi % 8);  // create mask for this bit position
+      if((bp->data[bi/8] & m) == 0){  // is this block free?
+        bp->data[bi/8] |= m;  // mark block as allocated in bitmap
+        log_write(bp);  // log the bitmap change
+        brelse(bp);     // release bitmap buffer
+        bzero(dev, b + bi);  // clear the newly allocated block
+        return b + bi;  // return block number
       }
     }
-    brelse(bp);
+    brelse(bp);  // release this bitmap block and try next
   }
   printf("balloc: out of blocks\n");
-  return 0;
+  return 0;  // no free blocks available
 }
 
-// Free a disk block.
-static void
-bfree(int dev, uint b)
+// free a disk block
+// marks the block as available in the free bitmap
+static void bfree(int dev, uint b)
 {
   struct buf *bp;
   int bi, m;
 
-  bp = bread(dev, BBLOCK(b, sb));
-  bi = b % BPB;
-  m = 1 << (bi % 8);
-  if((bp->data[bi/8] & m) == 0)
-    panic("freeing free block");
-  bp->data[bi/8] &= ~m;
-  log_write(bp);
-  brelse(bp);
+  bp = bread(dev, BBLOCK(b, sb));  // read bitmap block containing bit for block b
+  bi = b % BPB;                    // bit index within bitmap block
+  m = 1 << (bi % 8);               // create mask for this bit position
+  if((bp->data[bi/8] & m) == 0)    // check if block is already free
+    panic("freeing free block");   // this would be a bug
+  bp->data[bi/8] &= ~m;            // mark block as free in bitmap
+  log_write(bp);                   // log the bitmap change
+  brelse(bp);                      // release bitmap buffer
 }
 
 // Inodes.

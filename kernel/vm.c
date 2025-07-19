@@ -1,3 +1,17 @@
+// virtual memory management
+//
+// virtual memory fundamental concepts:
+// - every process has its own virtual address space
+// - virtual addresses are translated to physical addresses by the mmu (memory management unit)
+// - translation is controlled by page tables - data structures that map virtual to physical addresses
+// - page tables enable memory protection, isolation between processes, and efficient memory use
+//
+// risc-v sv39 virtual memory system:
+// - 39-bit virtual addresses (512 GB virtual address space)  
+// - 3-level page table hierarchy
+// - 4KB pages (4096 bytes per page)
+// - page table entries (PTEs) contain physical address + permission bits
+
 #include "param.h"
 #include "types.h"
 #include "memlayout.h"
@@ -6,105 +20,136 @@
 #include "defs.h"
 #include "fs.h"
 
-/*
- * the kernel's page table.
- */
-pagetable_t kernel_pagetable; // Pointer to uint64
+// the kernel's page table - maps kernel virtual addresses to physical addresses
+// kernel runs in virtual memory just like user processes
+pagetable_t kernel_pagetable;
 
+// linker symbols marking sections of kernel binary
 extern char etext[];  // kernel.ld sets this to end of kernel code.
+extern char trampoline[]; // trampoline.S - assembly code for kernel entry/exit
 
-extern char trampoline[]; // trampoline.S
-
-// Make a direct-map page table for the kernel.
+// create a direct-map page table for the kernel.
+// "direct-map" means virtual address = physical address for most mappings
+// this simplifies kernel memory management
 pagetable_t kvmmake(void)
 {
-  pagetable_t kpgtbl; // Kernel page table
+  pagetable_t kpgtbl;
 
-  kpgtbl = (pagetable_t) kalloc(); // Just allocate a page to this (4KB) converted to a pointer
-  memset(kpgtbl, 0, PGSIZE); // Set everything - all bytes to zero
+  // allocate a physical page to hold the root page table
+  // page table is just an array of 512 64-bit entries (4KB total)
+  kpgtbl = (pagetable_t) kalloc();
+  memset(kpgtbl, 0, PGSIZE); // clear all entries (invalid by default)
 
-  // uart registers
-  kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W); // Adds a mapping to the kernel page table
+  // set up kernel mappings for memory-mapped devices
+  // these mappings allow kernel to access hardware by reading/writing memory
+  
+  // uart registers - for console i/o
+  kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
 
-  // virtio mmio disk interface
+  // virtio mmio disk interface - for file system storage
   kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
 
-  // PLIC
+  // PLIC (platform-level interrupt controller) - for handling device interrupts
+  // large mapping (64MB) covers all PLIC registers
   kvmmap(kpgtbl, PLIC, PLIC, 0x4000000, PTE_R | PTE_W);
 
-  // map kernel text executable and read-only.
-  // etext is stored in the linker script to get the total amount of kernel code - read, write but NOT executable
+  // map kernel text (code) as executable and read-only.
+  // etext symbol marks end of kernel code section
+  // PTE_X makes pages executable, PTE_R makes them readable
   kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
 
-  // map kernel data and the physical RAM we'll make use of.
+  // map kernel data and remaining physical RAM as read-write
+  // everything after kernel code can be read and written but not executed
   kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
 
-  // map the trampoline for trap entry/exit to
-  // the highest virtual address in the kernel.
-  // Very last page is the trampoline -> mapped to the trampoline - external signal in trampoline.S
+  // map the trampoline page to highest virtual address in kernel space
+  // trampoline contains assembly code for switching between user/kernel mode
+  // it must be mapped at same virtual address in user and kernel page tables
   kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 
   // allocate and map a kernel stack for each process.
+  // each process gets its own kernel stack for use when running in kernel mode
   proc_mapstacks(kpgtbl);
   
   return kpgtbl;
 }
 
-// Initialize the one kernel_pagetable
+// initialize the kernel page table
+// called once during kernel startup
 void kvminit(void)
 {
   kernel_pagetable = kvmmake();
 }
 
-// Switch h/w page table register to the kernel's page table,
+// switch hardware page table register to the kernel's page table,
 // and enable paging.
+// this is where virtual memory actually gets turned on!
 void kvminithart()
 {
-  // wait for any previous writes to the page table memory to finish.
-  sfence_vma(); // Guards for changes in the page table
+  // memory barrier - ensure all previous writes to page table are visible
+  // important for correctness on out-of-order cpus
+  sfence_vma();
 
-  // BEFORE this runs, we have direct mapping
-  // Once we do this, now we do address translation
+  // load page table root address into satp (supervisor address translation and protection)
+  // MAKE_SATP creates the proper satp value with mode bits
+  // after this instruction, virtual memory is ENABLED
   w_satp(MAKE_SATP(kernel_pagetable));
 
-  // flush stale entries from the TLB.
+  // flush stale entries from the TLB (translation lookaside buffer)
+  // TLB caches recent virtual-to-physical address translations
+  // must flush when changing page tables
   sfence_vma();
 }
 
-// Return the address of the PTE in page table pagetable
-// that corresponds to virtual address va.  If alloc!=0,
+// return the address of the PTE in page table pagetable
+// that corresponds to virtual address va. if alloc!=0,
 // create any required page-table pages.
 //
-// The risc-v Sv39 scheme has three levels of page-table
-// pages. A page-table page contains 512 64-bit PTEs.
-// A 64-bit virtual address is split into five fields:
-//   39..63 -- must be zero.
-//   30..38 -- 9 bits of level-2 index.
-//   21..29 -- 9 bits of level-1 index.
-//   12..20 -- 9 bits of level-0 index.
-//    0..11 -- 12 bits of byte offset within the page.
-// Three level page table
+// the risc-v sv39 scheme has three levels of page-table pages:
+// - level 2: top-level page directory (root)
+// - level 1: middle-level page tables  
+// - level 0: bottom-level page tables (leaf)
+//
+// a page-table page contains 512 64-bit PTEs.
+// a 64-bit virtual address is split into five fields:
+//   39..63 -- must be zero (unused)
+//   30..38 -- 9 bits of level-2 index (512 entries)
+//   21..29 -- 9 bits of level-1 index (512 entries)  
+//   12..20 -- 9 bits of level-0 index (512 entries)
+//    0..11 -- 12 bits of byte offset within the page (4096 bytes)
+//
+// this gives 512 * 512 * 512 * 4096 = 512 GB virtual address space
 pte_t * walk(pagetable_t pagetable, uint64 va, int alloc)
 {
-  // Check if we are beyond the largest virtual address
+  // check if virtual address is within valid range
   if(va >= MAXVA)
     panic("walk");
 
-  // Redo the valid check, and allocate page if not valid
+  // walk down the 3-level page table hierarchy
+  // start at level 2 (root), walk down to level 0 (leaf)
   for(int level = 2; level > 0; level--) {
-    // Look inside page table using level and VA to get the index into PTE - PX simply grabs the offset for us
+    // get pointer to page table entry for this level
+    // PX() extracts the appropriate 9-bit index from virtual address
     pte_t *pte = &pagetable[PX(level, va)];
+    
     if(*pte & PTE_V) {
+      // page table entry is valid - extract physical address of next level
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
+      // page table entry is invalid - need to allocate new page table
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
-        return 0;
+        return 0; // allocation failed or not requested
+        
+      // clear new page table (all entries start invalid)
       memset(pagetable, 0, PGSIZE);
 
-      // Set the first table entry to be a physical address to a PTE, and set the valid bit
+      // install physical address of new page table in current PTE
+      // set valid bit to make this entry active
       *pte = PA2PTE(pagetable) | PTE_V;
     }
   }
+  
+  // return pointer to final level-0 PTE that maps the virtual address
   return &pagetable[PX(0, va)];
 }
 
