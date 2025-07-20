@@ -30,7 +30,7 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
-// helps ensure that wakeups of wait()ing parents are not lost
+// helps ensure that wake_ups of wait()ing parents are not lost
 // helps obey the memory model when using p->parent
 // must be acquired before any p->lock
 struct spinlock wait_lock;
@@ -66,12 +66,12 @@ void procinit(void)
   struct proc *p;
   
   // initialize locks for process management
-  initlock(&pid_lock, "nextpid");    // protects pid allocation
-  initlock(&wait_lock, "wait_lock"); // coordinates parent/child relationships
+  init_lock(&pid_lock, "nextpid");    // protects pid allocation
+  init_lock(&wait_lock, "wait_lock"); // coordinates parent/child relationships
   
   // initialize each process slot in the process table
   for(p = proc; p < &proc[NPROC]; p++) {
-      initlock(&p->lock, "proc");           // protects individual process fields
+      init_lock(&p->lock, "proc");           // protects individual process fields
       p->state = UNUSED;                    // mark slot as available
       p->kstack = KSTACK((int) (p - proc)); // remember kernel stack virtual address
   }
@@ -355,7 +355,7 @@ reparent(struct proc *p)
   for(pp = proc; pp < &proc[NPROC]; pp++){
     if(pp->parent == p){
       pp->parent = initproc;
-      wakeup(initproc);
+      wake_up(initproc);
     }
   }
 }
@@ -391,7 +391,7 @@ exit(int status)
   reparent(p);
 
   // Parent might be sleeping in wait().
-  wakeup(p->parent);
+  wake_up(p->parent);
   
   acquire(&p->lock);
 
@@ -454,64 +454,68 @@ wait(uint64 addr)
   }
 }
 
-// per-CPU process scheduler
-// each CPU calls scheduler() after setting itself up
-// scheduler never returns - it loops forever doing:
-//  - choose a process to run (round-robin selection)
-//  - swtch to start running that process  
-//  - eventually that process transfers control back via swtch to the scheduler
+// per-cpu core process scheduler - the heart of multitasking
+// each cpu core calls scheduler() after initialization and never returns
+// implements time-sharing by continuously switching between processes:
+//  1. scan process table for runnable processes (round-robin selection)
+//  2. context switch to chosen process and let it run
+//  3. when process yields/blocks, switch back to scheduler and repeat
 //
-// this is the heart of the operating system - it implements multitasking
-// by rapidly switching between processes, giving each one a time slice
+// this creates the illusion that multiple programs run simultaneously
+// by rapidly switching between them faster than human perception
 void scheduler(void)
 {
-  struct proc *p;
-  struct cpu *c = mycpu();
+  struct proc *candidate_process;
+  struct cpu *current_cpu_core = mycpu();
 
-  c->proc = 0;  // no process currently running on this cpu
+  current_cpu_core->proc = 0;  // initialize: no process currently running on this cpu
   
-  // infinite loop - scheduler runs forever
+  // infinite scheduling loop - scheduler runs forever
   for(;;){
-    // enable interrupts to avoid deadlock if all processes are waiting
-    // the most recent process to run may have had interrupts turned off
+    // enable interrupts to prevent deadlock scenarios
+    // if all processes are sleeping/waiting, we need interrupts to wake them
+    // the most recent process may have disabled interrupts during critical sections
     intr_on();
 
-    int found = 0;  // track whether we found a runnable process
+    int found_runnable_process = 0;  // flag to track if we found any work to do
     
-    // scan through entire process table looking for runnable processes
-    // this is simple round-robin scheduling - not sophisticated but fair
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);  // protect process state from concurrent modification
+    // scan entire process table searching for runnable processes
+    // simple round-robin algorithm: fair but not optimal for performance
+    // more sophisticated schedulers consider priorities, deadlines, cpu affinity
+    for(candidate_process = proc; candidate_process < &proc[NPROC]; candidate_process++) {
+      acquire(&candidate_process->lock);  // protect process state from concurrent cpu access
       
-      if(p->state == RUNNABLE) {
-        // found a process ready to run!
+      if(candidate_process->state == RUNNABLE) {
+        // found a process ready to execute!
         
-        // switch to chosen process - it is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us
-        p->state = RUNNING;  // mark process as currently running
-        c->proc = p;         // tell this cpu which process it's running
+        // transition process from ready queue to running state
+        // the process is responsible for releasing its lock during execution
+        // and reacquiring it when yielding back to scheduler  
+        candidate_process->state = RUNNING;  // mark process as actively executing
+        current_cpu_core->proc = candidate_process;         // record which process this cpu is running
         
-        // perform the context switch!
-        // save scheduler's registers in c->context
-        // load process's registers from p->context
-        // execution continues wherever the process last yielded
-        swtch(&c->context, &p->context);
+        // perform the critical context switch operation!
+        // 1. save scheduler's cpu registers (stack pointer, etc.) in current_cpu_core->context
+        // 2. load process's saved registers from candidate_process->context
+        // 3. execution jumps to wherever the process last yielded/was preempted
+        swtch(&current_cpu_core->context, &candidate_process->context);
 
-        // when we get here, the process has yielded back to scheduler
-        // process is done running for now
-        // it should have changed its p->state before coming back
-        c->proc = 0;  // no longer running any process
-        found = 1;    // we found and ran a process
+        // execution returns here when process yields back to scheduler
+        // the process has either:
+        // - voluntarily yielded (sleep, wait, exit)
+        // - been preempted by timer interrupt 
+        // - completed its time slice
+        current_cpu_core->proc = 0;  // clear cpu's current process pointer
+        found_runnable_process = 1;    // record that we successfully ran a process
       }
-      release(&p->lock);
+      release(&candidate_process->lock);
     }
     
-    // if no runnable processes found, wait for interrupt
-    // wfi (wait for interrupt) puts cpu in low-power state until interrupt arrives
-    // interrupts might wake up sleeping processes or signal completion of i/o
-    if(found == 0) {
-      intr_on();          // ensure interrupts are enabled
+    // handle case where no processes are currently runnable
+    // all processes may be sleeping/waiting for i/o, user input, or other events
+    // use wait-for-interrupt to save power until something becomes ready
+    if(found_runnable_process == 0) {
+      intr_on();          // ensure interrupts are enabled to wake sleeping processes
       asm volatile("wfi"); // wait for interrupt (low power mode)
     }
   }
@@ -585,8 +589,8 @@ void sleep(void *chan, struct spinlock *lk)
   struct proc *p = myproc();
   
   // must acquire p->lock in order to change p->state and then call sched
-  // once we hold p->lock, we can be guaranteed that we won't miss any wakeup
-  // (wakeup locks p->lock), so it's okay to release lk
+  // once we hold p->lock, we can be guaranteed that we won't miss any wake_up
+  // (wake_up locks p->lock), so it's okay to release lk
 
   acquire(&p->lock);  // protect process state changes
   release(lk);        // release the lock we were holding
@@ -597,7 +601,7 @@ void sleep(void *chan, struct spinlock *lk)
 
   sched();  // switch to scheduler (process won't run until woken up)
 
-  // when we get here, someone called wakeup(chan) and scheduler picked us to run
+  // when we get here, someone called wake_up(chan) and scheduler picked us to run
   // tidy up
   p->chan = 0;  // no longer waiting for anything
 
@@ -606,20 +610,28 @@ void sleep(void *chan, struct spinlock *lk)
   acquire(lk);
 }
 
-// Wake up all processes sleeping on chan.
-// Must be called without any p->lock.
-void
-wakeup(void *chan)
+// wake up all processes sleeping on the specified channel
+// scans entire process table to find sleeping processes waiting on this event
+// must be called without holding any process lock to avoid deadlock
+// chan - the wait channel (memory address used as event identifier)
+void wake_up(void *wait_channel)
 {
-  struct proc *p;
-
-  for(p = proc; p < &proc[NPROC]; p++) {
-    if(p != myproc()){
-      acquire(&p->lock);
-      if(p->state == SLEEPING && p->chan == chan) {
-        p->state = RUNNABLE;
+  struct proc *process_to_check;
+  
+  // scan all processes in the system process table
+  for(process_to_check = proc; process_to_check < &proc[NPROC]; process_to_check++) {
+    // skip the current running process (cannot wake up itself)
+    if(process_to_check != myproc()){
+      // acquire process lock for atomic state examination and modification
+      acquire(&process_to_check->lock);
+      
+      // check if this process is sleeping on the specified channel
+      if(process_to_check->state == SLEEPING && process_to_check->chan == wait_channel) {
+        // wake up the process by making it schedulable again
+        process_to_check->state = RUNNABLE;
       }
-      release(&p->lock);
+      
+      release(&process_to_check->lock);
     }
   }
 }
@@ -667,33 +679,48 @@ killed(struct proc *p)
   return k;
 }
 
-// Copy to either a user address, or kernel address,
-// depending on usr_dst.
-// Returns 0 on success, -1 on error.
-int
-either_copyout(int user_dst, uint64 dst, void *src, uint64 len)
+// safely copy data to either user space or kernel space destination
+// handles address space translation and memory protection automatically
+// user_dst - 1 if destination is user space, 0 if kernel space
+// dst - destination virtual address
+// src - source kernel address (always kernel space)
+// len - number of bytes to copy
+// returns - 0 on success, -1 on error (invalid user address or page fault)
+int either_copyout(int user_dst, uint64 dst, void *src, uint64 len)
 {
-  struct proc *p = myproc();
+  struct proc *current_process = myproc();
+  
   if(user_dst){
-    return copyout(p->pagetable, dst, src, len);
+    // destination is user space - use page table translation and protection
+    // copyout() checks if user address is valid and accessible
+    return copyout(current_process->pagetable, dst, src, len);
   } else {
+    // destination is kernel space - direct memory copy (no translation needed)
     memmove((char *)dst, src, len);
-    return 0;
+    return 0;  // kernel space access always succeeds
   }
 }
 
-// Copy from either a user address, or kernel address,
-// depending on usr_src.
-// Returns 0 on success, -1 on error.
+// safely copy data from either user space or kernel space source
+// handles address space translation and memory protection automatically  
+// dst - destination kernel address (always kernel space)
+// user_src - 1 if source is user space, 0 if kernel space
+// src - source virtual address
+// len - number of bytes to copy
+// returns - 0 on success, -1 on error (invalid user address or page fault)
 int
 either_copyin(void *dst, int user_src, uint64 src, uint64 len)
 {
-  struct proc *p = myproc();
+  struct proc *current_process = myproc();
+  
   if(user_src){
-    return copyin(p->pagetable, dst, src, len);
+    // source is user space - use page table translation and protection
+    // copyin() checks if user address is valid and accessible
+    return copyin(current_process->pagetable, dst, src, len);
   } else {
+    // source is kernel space - direct memory copy (no translation needed)
     memmove(dst, (char*)src, len);
-    return 0;
+    return 0;  // kernel space access always succeeds
   }
 }
 

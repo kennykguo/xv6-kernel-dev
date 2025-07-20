@@ -63,7 +63,7 @@ virtio_disk_init(void)
 {
   uint32 status = 0;
 
-  initlock(&disk.vdisk_lock, "virtio_disk");
+  init_lock(&disk.vdisk_lock, "virtio_disk");
 
   if(*R(VIRTIO_MMIO_MAGIC_VALUE) != 0x74726976 ||
      *R(VIRTIO_MMIO_VERSION) != 2 ||
@@ -178,7 +178,7 @@ free_desc(int i)
   disk.desc[i].flags = 0;
   disk.desc[i].next = 0;
   disk.free[i] = 1;
-  wakeup(&disk.free[0]);
+  wake_up(&disk.free[0]);
 }
 
 // free a chain of descriptors.
@@ -318,7 +318,7 @@ virtio_disk_intr()
 
     struct buf *b = disk.info[id].b;
     b->disk = 0;   // disk is done with buf
-    wakeup(b);
+    wake_up(b);
 
     disk.used_idx += 1;
   }

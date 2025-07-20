@@ -23,51 +23,68 @@
 #include "syscall.h"
 #include "defs.h"
 
-// fetch a 64-bit value from user virtual address
-// safely copies data from user space to kernel space
-int fetchaddr(uint64 addr, uint64 *ip)
+// safely fetch a 64-bit value from user virtual address space
+// copies data from user space to kernel space with proper bounds checking
+// critical security function - prevents user programs from accessing kernel memory
+int fetchaddr(uint64 user_virtual_address, uint64 *kernel_destination_pointer)
 {
-  struct proc *p = myproc();
-  // check if address is within process memory bounds
-  if(addr >= p->sz || addr+sizeof(uint64) > p->sz) // both tests needed, in case of overflow
+  struct proc *current_process = myproc();
+  
+  // comprehensive bounds checking to prevent buffer overflow attacks
+  // check if address is within process memory bounds (both tests needed for overflow protection)
+  if(user_virtual_address >= current_process->sz || 
+     user_virtual_address + sizeof(uint64) > current_process->sz)
     return -1;
-  // use copyin to safely copy from user page table to kernel
-  if(copyin(p->pagetable, (char *)ip, addr, sizeof(*ip)) != 0)
+    
+  // use copyin to safely copy from user page table to kernel memory
+  // copyin handles page table translation and validates user memory access
+  if(copyin(current_process->pagetable, (char *)kernel_destination_pointer, 
+            user_virtual_address, sizeof(*kernel_destination_pointer)) != 0)
     return -1;
+    
   return 0;
 }
 
-// fetch a null-terminated string from user virtual address
-// returns length of string, not including null terminator, or -1 for error
-int fetchstr(uint64 addr, char *buf, int max)
+// safely fetch a null-terminated string from user virtual address space
+// copies string from user space to kernel buffer with length limits
+// returns length of copied string (excluding null terminator) or -1 for error
+int fetchstr(uint64 user_string_address, char *kernel_string_buffer, int maximum_string_length)
 {
-  struct proc *p = myproc();
-  // copyinstr safely copies string from user space, stopping at null terminator
-  if(copyinstr(p->pagetable, buf, addr, max) < 0)
+  struct proc *current_process = myproc();
+  
+  // copyinstr safely copies string from user space, stopping at null terminator or max length
+  // this prevents buffer overflow attacks by limiting how much data can be copied
+  if(copyinstr(current_process->pagetable, kernel_string_buffer, 
+               user_string_address, maximum_string_length) < 0)
     return -1;
-  return strlen(buf);
+    
+  return strlen(kernel_string_buffer);
 }
 
-// get the nth system call argument from saved registers
-// arguments are passed in risc-v argument registers a0-a5
-static uint64 argraw(int n)
+// extract the nth system call argument from saved risc-v registers
+// risc-v calling convention passes arguments in registers a0-a5 (up to 6 arguments)
+// trapframe preserves user register state when transitioning to kernel mode
+static uint64 argraw(int argument_index)
 {
-  struct proc *p = myproc();
-  switch (n) {
+  struct proc *current_process = myproc();
+  
+  // retrieve argument from appropriate register based on position
+  // risc-v application binary interface (abi) defines argument register usage
+  switch (argument_index) {
   case 0:
-    return p->trapframe->a0;  // first argument in a0 register
+    return current_process->trapframe->a0;  // first argument in a0 register
   case 1:
-    return p->trapframe->a1;  // second argument in a1 register
+    return current_process->trapframe->a1;  // second argument in a1 register
   case 2:
-    return p->trapframe->a2;  // third argument in a2 register
+    return current_process->trapframe->a2;  // third argument in a2 register
   case 3:
-    return p->trapframe->a3;  // fourth argument in a3 register
+    return current_process->trapframe->a3;  // fourth argument in a3 register
   case 4:
-    return p->trapframe->a4;  // fifth argument in a4 register
+    return current_process->trapframe->a4;  // fifth argument in a4 register
   case 5:
-    return p->trapframe->a5;  // sixth argument in a5 register
+    return current_process->trapframe->a5;  // sixth argument in a5 register
   }
-  panic("argraw");
+  panic("argraw: invalid argument index");
   return -1;
 }
 

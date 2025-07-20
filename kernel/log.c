@@ -57,7 +57,7 @@ initlog(int dev, struct superblock *sb)
   if (sizeof(struct logheader) >= BSIZE)
     panic("initlog: too big logheader");
 
-  initlock(&log.lock, "log");
+  init_lock(&log.lock, "log");
   log.start = sb->logstart;
   log.size = sb->nlog;
   log.dev = dev;
@@ -159,7 +159,7 @@ end_op(void)
     // begin_op() may be waiting for log space,
     // and decrementing log.outstanding has decreased
     // the amount of reserved space.
-    wakeup(&log);
+    wake_up(&log);
   }
   release(&log.lock);
 
@@ -169,7 +169,7 @@ end_op(void)
     commit();
     acquire(&log.lock);
     log.committing = 0;
-    wakeup(&log);
+    wake_up(&log);
     release(&log.lock);
   }
 }

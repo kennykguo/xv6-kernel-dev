@@ -23,96 +23,102 @@ void freerange(void *pa_start, void *pa_end);
 // all memory after 'end' can be used for dynamic allocation
 extern char end[]; 
 
-// free list node structure - elegant trick!
+// free page list node structure - clever space-saving technique!
 // instead of separate metadata, we store the free list directly
 // in the free pages themselves. since free pages aren't being used,
 // we can store a pointer in the first 8 bytes of each free page.
-struct run {
-  struct run *next; // pointer to next free page
+// this eliminates the need for a separate data structure to track free pages
+struct free_page_list_node {
+  struct free_page_list_node *next_free_page; // pointer to next available page
 };
 
-// global allocator state
+// global physical memory allocator state
 struct {
-  struct spinlock lock;  // protects freelist from concurrent access
-  struct run *freelist;  // head of free page list
-} kmem;
+  struct spinlock physical_memory_lock;   // protects free list from concurrent cpu access
+  struct free_page_list_node *free_page_list_head;  // head of linked list of available pages
+} kernel_memory_allocator;
 
-// initialize the memory allocator
-// called once during kernel startup
+// initialize the physical memory allocator subsystem
+// called once during kernel startup to set up page allocation
 void kinit()
 {
-  // initialize spinlock to protect freelist from race conditions
-  // multiple cpus may call kalloc/kfree simultaneously  
-  initlock(&kmem.lock, "kmem");
+  // initialize spinlock to protect free page list from race conditions
+  // multiple cpu cores may call kalloc/kfree simultaneously during operation
+  init_lock(&kernel_memory_allocator.physical_memory_lock, "physical_memory_allocator");
   
-  // add all free memory pages to the free list
-  // memory from end of kernel to PHYSTOP is available for allocation
+  // populate free list with all available physical memory pages
+  // memory from end of kernel binary to PHYSTOP (physical memory limit) is available
+  // this creates the initial pool of allocatable pages
   freerange(end, (void*)PHYSTOP);
 }
 
-// add all pages in range [pa_start, pa_end) to free list
-// called during initialization to populate the free list
-void freerange(void *pa_start, void *pa_end)
+// add all pages in range [physical_address_start, physical_address_end) to free list
+// called during initialization to populate the initial free page pool
+void freerange(void *physical_address_start, void *physical_address_end)
 {
-  char *p;
+  char *current_page_address;
   
   // round up start address to next page boundary
-  // ensures we only free complete 4096-byte pages
-  p = (char*)PGROUNDUP((uint64)pa_start);
+  // ensures we only free complete 4096-byte aligned pages
+  current_page_address = (char*)PGROUNDUP((uint64)physical_address_start);
   
-  // iterate through each page in the range
-  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
-    kfree(p); // add this page to free list
+  // iterate through each 4kb page in the specified range
+  for(; current_page_address + PGSIZE <= (char*)physical_address_end; current_page_address += PGSIZE)
+    kfree(current_page_address); // add this page to the free list
 }
 
-// free the page of physical memory pointed at by pa,
-// which normally should have been returned by a call to kalloc().
-// (the exception is when initializing the allocator; see kinit above.)
-void kfree(void *pa)
+// return a physical memory page to the free pool
+// accepts a page address that was previously allocated by kalloc()
+// (exception: during initialization, this is called on never-allocated pages)
+void kfree(void *physical_address)
 {
-  struct run *r;
+  struct free_page_list_node *new_free_page_node;
 
-  // sanity checks to catch programming errors:
-  // - pa must be page-aligned (multiple of 4096)  
-  // - pa must not point into kernel code/data
-  // - pa must be within our memory range
-  if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
+  // comprehensive sanity checks to catch programming errors:
+  // 1. physical_address must be page-aligned (multiple of 4096 bytes)
+  // 2. physical_address must not point into kernel code/data section
+  // 3. physical_address must be within valid physical memory range
+  if(((uint64)physical_address % PGSIZE) != 0 || 
+     (char*)physical_address < end || 
+     (uint64)physical_address >= PHYSTOP)
     panic("kfree");
 
-  // fill page with junk to catch use-after-free bugs
-  // if code tries to use freed memory, it gets garbage instead of old data
-  // this helps catch dangling pointer bugs during development
-  memset(pa, 1, PGSIZE);
+  // security feature: fill page with garbage to catch use-after-free bugs
+  // if code accidentally tries to use freed memory, it gets junk instead of old data
+  // this debugging technique helps catch dangling pointer vulnerabilities
+  memset(physical_address, 1, PGSIZE);
 
-  // add page to front of free list
-  // treat the page itself as a struct run
-  r = (struct run*)pa;
+  // prepare to add page to front of free list
+  // clever trick: treat the freed page itself as a free_page_list_node structure
+  new_free_page_node = (struct free_page_list_node*)physical_address;
 
-  // critical section: update free list atomically
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;  // point new node to current head
-  kmem.freelist = r;        // make new node the new head  
-  release(&kmem.lock);
+  // critical section: update free list atomically to prevent race conditions
+  acquire(&kernel_memory_allocator.physical_memory_lock);
+  new_free_page_node->next_free_page = kernel_memory_allocator.free_page_list_head;  // point new node to current head
+  kernel_memory_allocator.free_page_list_head = new_free_page_node;        // make new node the new head  
+  release(&kernel_memory_allocator.physical_memory_lock);
 }
  
-// allocate one 4096-byte page of physical memory.
-// returns a pointer that the kernel can use.
-// returns 0 if the memory cannot be allocated.
+// allocate one 4096-byte page of physical memory from the free pool
+// returns a kernel-usable pointer to the allocated page
+// returns null pointer (0) if no memory is available (out of memory condition)
 void * kalloc(void)
 {
-  struct run *r;
+  struct free_page_list_node *allocated_page_node;
 
-  // critical section: remove page from free list atomically
-  acquire(&kmem.lock);
-  r = kmem.freelist;        // get current head of free list
-  if(r)
-    kmem.freelist = r->next; // advance head to next node
-  release(&kmem.lock);
+  // critical section: atomically remove page from free list
+  // prevents race conditions when multiple cpus allocate simultaneously
+  acquire(&kernel_memory_allocator.physical_memory_lock);
+  allocated_page_node = kernel_memory_allocator.free_page_list_head;  // get current head of free list
+  if(allocated_page_node)
+    kernel_memory_allocator.free_page_list_head = allocated_page_node->next_free_page; // advance head to next node
+  release(&kernel_memory_allocator.physical_memory_lock);
 
-  // fill allocated page with junk to catch uninitialized read bugs
-  // forces code to properly initialize memory before using it
-  if(r)
-    memset((char*)r, 5, PGSIZE); 
+  // security feature: fill allocated page with garbage to catch uninitialized read bugs
+  // prevents information leakage and forces code to properly initialize memory
+  // different pattern (5) than kfree (1) to help distinguish allocation vs free bugs
+  if(allocated_page_node)
+    memset((char*)allocated_page_node, 5, PGSIZE); 
     
-  return (void*)r;  // return pointer to allocated page (or 0 if no memory)
+  return (void*)allocated_page_node;  // return pointer to allocated page (or null if out of memory)
 }

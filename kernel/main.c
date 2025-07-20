@@ -17,13 +17,13 @@ void main() {
     if(cpuid() == 0){
         // initialize console first so we can print debug/status messages
         // must come early since other init functions may want to print messages
-        consoleinit();
+        console_init();
         printfinit();
         printf("\n");
         printf("xv6 kernel is booting\n");
         printf("hello kenny!\n");
         printf("\n");
-
+        
         // memory management initialization - must come early since everything needs memory
         // kinit() sets up the physical page allocator
         // physical memory is divided into 4KB pages, and kinit() creates a free list

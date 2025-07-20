@@ -192,7 +192,7 @@ iinit()
 {
   int i = 0;
   
-  initlock(&itable.lock, "itable");
+  init_lock(&itable.lock, "itable");
   for(i = 0; i < NINODE; i++) {
     initsleeplock(&itable.inode[i].lock, "inode");
   }

@@ -18,8 +18,8 @@ void            bpin(struct buf*);
 void            bunpin(struct buf*);
 
 // console.c
-void            consoleinit(void);
-void            consoleintr(int);
+void            console_init(void);
+void            console_intr(int);
 void            consputc(int);
 
 // exec.c
@@ -101,7 +101,7 @@ void            sched(void);
 void            sleep(void*, struct spinlock*);
 void            userinit(void);
 int             wait(uint64);
-void            wakeup(void*);
+void            wake_up(void*);
 void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
@@ -113,7 +113,7 @@ void            swtch(struct context*, struct context*);
 // spinlock.c
 void            acquire(struct spinlock*);
 int             holding(struct spinlock*);
-void            initlock(struct spinlock*, char*);
+void            init_lock(struct spinlock*, char*);
 void            release(struct spinlock*);
 void            push_off(void);
 void            pop_off(void);
@@ -149,9 +149,9 @@ extern struct spinlock tickslock;
 void            usertrapret(void);
 
 // uart.c
-void            uartinit(void);
+void            uart_init(void);
 void            uartintr(void);
-void            uartputc(int);
+void            uart_put_char(int);
 void            uartputc_sync(int);
 int             uartgetc(void);
 

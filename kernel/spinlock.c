@@ -9,7 +9,7 @@
 #include "defs.h"
 
 // Mutual exclusion spinlock
-void initlock(struct spinlock *lk, char *name)
+void init_lock(struct spinlock *lk, char *name)
 {
   lk->name = name;
   lk->locked = 0;

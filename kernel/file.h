@@ -3,7 +3,7 @@
 // the kernel maintains in-memory structures that mirror and cache on-disk data:
 // - struct file: represents an open file (file descriptor)
 // - struct inode: in-memory copy of disk inode with additional state
-// - struct devsw: device driver interface for special files
+// - struct device_driver: device driver interface for special files
 
 // open file structure - represents one file descriptor
 // when a process opens a file, kernel creates one of these structures
@@ -48,12 +48,12 @@ struct inode {
 // device driver interface - maps major device numbers to driver functions
 // allows kernel to support different types of devices (console, disk, etc.)
 // each device type provides read and write functions
-struct devsw {
+struct device_driver {
   int (*read)(int, uint64, int);   // device read function pointer
   int (*write)(int, uint64, int);  // device write function pointer
 };
 
-extern struct devsw devsw[];  // global device switch table
+extern struct device_driver device_drivers[];  // global device driver table
 
 // well-known device numbers
 #define CONSOLE 1  // major device number for console (terminal)

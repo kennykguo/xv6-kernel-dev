@@ -34,7 +34,7 @@ pipealloc(struct file **f0, struct file **f1)
   pi->writeopen = 1;
   pi->nwrite = 0;
   pi->nread = 0;
-  initlock(&pi->lock, "pipe");
+  init_lock(&pi->lock, "pipe");
   (*f0)->type = FD_PIPE;
   (*f0)->readable = 1;
   (*f0)->writable = 0;
@@ -61,10 +61,10 @@ pipeclose(struct pipe *pi, int writable)
   acquire(&pi->lock);
   if(writable){
     pi->writeopen = 0;
-    wakeup(&pi->nread);
+    wake_up(&pi->nread);
   } else {
     pi->readopen = 0;
-    wakeup(&pi->nwrite);
+    wake_up(&pi->nwrite);
   }
   if(pi->readopen == 0 && pi->writeopen == 0){
     release(&pi->lock);
@@ -86,7 +86,7 @@ pipewrite(struct pipe *pi, uint64 addr, int n)
       return -1;
     }
     if(pi->nwrite == pi->nread + PIPESIZE){ //DOC: pipewrite-full
-      wakeup(&pi->nread);
+      wake_up(&pi->nread);
       sleep(&pi->nwrite, &pi->lock);
     } else {
       char ch;
@@ -96,7 +96,7 @@ pipewrite(struct pipe *pi, uint64 addr, int n)
       i++;
     }
   }
-  wakeup(&pi->nread);
+  wake_up(&pi->nread);
   release(&pi->lock);
 
   return i;
@@ -124,7 +124,7 @@ piperead(struct pipe *pi, uint64 addr, int n)
     if(copyout(pr->pagetable, addr + i, &ch, 1) == -1)
       break;
   }
-  wakeup(&pi->nwrite);  //DOC: piperead-wakeup
+  wake_up(&pi->nwrite);  //DOC: piperead-wake_up
   release(&pi->lock);
   return i;
 }

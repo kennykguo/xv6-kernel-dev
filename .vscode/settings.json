@@ -60,6 +60,8 @@
     "__config": "cpp",
     "file.h": "c",
     "proc.h": "c",
-    "spinlock.h": "c"
+    "spinlock.h": "c",
+    "types.h": "c",
+    "param.h": "c"
   }
 }
