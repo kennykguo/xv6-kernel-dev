@@ -15,13 +15,13 @@ void main() {
     // only cpu 0 does the main initialization to avoid race conditions
     // other cpus wait until initialization is complete, then do minimal setup
     if(cpuid() == 0){
-        
         // initialize console first so we can print debug/status messages
         // must come early since other init functions may want to print messages
         consoleinit();
         printfinit();
         printf("\n");
         printf("xv6 kernel is booting\n");
+        printf("hello kenny!\n");
         printf("\n");
 
         // memory management initialization - must come early since everything needs memory

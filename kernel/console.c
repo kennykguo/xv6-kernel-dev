@@ -192,6 +192,7 @@ consoleintr(int c)
 void consoleinit(void)
 {
   // initialize the console lock to synchronize access between cpus
+  // this func creates the lock for this
   initlock(&cons.lock, "cons");
 
   // initialize the uart hardware for serial communication

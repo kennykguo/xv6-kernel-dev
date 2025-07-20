@@ -93,7 +93,7 @@ void kvminithart()
   // load page table root address into satp (supervisor address translation and protection)
   // MAKE_SATP creates the proper satp value with mode bits
   // after this instruction, virtual memory is ENABLED
-  w_satp(MAKE_SATP(kernel_pagetable));
+  write_supervisor_address_translation_and_protection_register(MAKE_SATP(kernel_pagetable));
 
   // flush stale entries from the TLB (translation lookaside buffer)
   // TLB caches recent virtual-to-physical address translations

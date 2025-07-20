@@ -20,7 +20,7 @@
 // Takes base UART addr, and then add reg, then casting to a pointer a memory address -> just a single byte
 // No alignment trouble
 // The keyboard volatile -> tells the compiler to not optimize code utilizing this variable
-#define Reg(reg) ((volatile unsigned char *)(UART0 + (reg)))
+#define UART_OFFSET(reg) ((volatile unsigned char *)(UART0 + (reg)))
 
 // the UART control registers.
 // some have different meanings for
@@ -42,8 +42,8 @@
 #define LSR_RX_READY (1<<0)   // input is waiting to be read from RHR
 #define LSR_TX_IDLE (1<<5)    // THR can accept another character to send
 
-#define ReadReg(reg) (*(Reg(reg)))
-#define WriteReg(reg, v) (*(Reg(reg)) = (v)) // Pointer dereference function to translate value into memory address, then write
+#define READ_UART_OFFSET_REG(reg) (*(UART_OFFSET(reg)))
+#define WRITE_UART_REG(reg, v) (*(UART_OFFSET(reg)) = (v)) // Pointer dereference function to translate value into memory address, then write
 
 // the transmit output buffer.
 struct spinlock uart_tx_lock;
@@ -58,29 +58,29 @@ void uartstart();
 
 void uartinit(void) {
 
-  // disable interrupts.
-  // Write reg -> disable interrupts for the chip, not the CPU
-  // Write to memory address that represents a piece of hardware
-  WriteReg(IER, 0x00);
+  // disable interrupts
+  // write reg -> disable interrupts for the chip, not the CPU
+  // write to memory address that represents a piece of hardware
+  WRITE_UART_REG(IER, 0x00);
 
   // special mode to set baud rate.
   // Special value, to change driver behaviour -> line control register
   // UART is a protocol that wiggles electrical lines up and down. Clock signal is used to signal that data is a certain state. UART has no clock, both sides agree upon fixed time scale - baud rate
-  WriteReg(LCR, LCR_BAUD_LATCH);
+  WRITE_UART_REG(LCR, LCR_BAUD_LATCH);
   // LSB for baud rate of 38.4K.
-  WriteReg(0, 0x03);
+  WRITE_UART_REG(0, 0x03);
   // MSB for baud rate of 38.4K.
-  WriteReg(1, 0x00);
+  WRITE_UART_REG(1, 0x00);
 
   // leave set-baud mode,
   // and set word length to 8 bits, no parity. Transferred 8 bits at a time, through UART
-  WriteReg(LCR, LCR_EIGHT_BITS);
+  WRITE_UART_REG(LCR, LCR_EIGHT_BITS);
 
   // reset and enable FIFOs. FIFO Queues DS for data
-  WriteReg(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
+  WRITE_UART_REG(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
 
   // enable transmit and receive interrupts. Delivered by device to OS
-  WriteReg(IER, IER_TX_ENABLE | IER_RX_ENABLE); 
+  WRITE_UART_REG(IER, IER_TX_ENABLE | IER_RX_ENABLE); 
 
   initlock(&uart_tx_lock, "uart"); // Spinlock - only one CPU can interact with UART
 }
@@ -127,10 +127,10 @@ void uartputc_sync(int c)
 
   // wait for Transmit Holding Empty to be set in LSR.
   // Wait for line status register to set to empty, masking bit for transfer, spin in while loop
-  while((ReadReg(LSR) & LSR_TX_IDLE) == 0)
+  while((READ_UART_OFFSET_REG(LSR) & LSR_TX_IDLE) == 0)
     ;
   // Transmit holding register
-  WriteReg(THR, c);
+  WRITE_UART_REG(THR, c);
 
   pop_off(); // Pop off interrupt stack
 }
@@ -144,11 +144,11 @@ void uartstart()
   while(1){
     if(uart_tx_w == uart_tx_r){
       // transmit buffer is empty.
-      ReadReg(ISR);
+      READ_UART_OFFSET_REG(ISR);
       return;
     }
     
-    if((ReadReg(LSR) & LSR_TX_IDLE) == 0){
+    if((READ_UART_OFFSET_REG(LSR) & LSR_TX_IDLE) == 0){
       // the UART transmit holding register is full,
       // so we cannot give it another byte.
       // it will interrupt when it's ready for a new byte.
@@ -161,7 +161,7 @@ void uartstart()
     // maybe uartputc() is waiting for space in the buffer.
     wakeup(&uart_tx_r);
     
-    WriteReg(THR, c);
+    WRITE_UART_REG(THR, c);
   }
 }
 
@@ -170,9 +170,9 @@ void uartstart()
 int
 uartgetc(void)
 {
-  if(ReadReg(LSR) & 0x01){
+  if(READ_UART_OFFSET_REG(LSR) & 0x01){
     // input data is ready.
-    return ReadReg(RHR);
+    return READ_UART_OFFSET_REG(RHR);
   } else {
     return -1;
   }

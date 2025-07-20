@@ -1,3 +1,4 @@
+// x
 #include "types.h"  // defines basic types used throughout the kernel (uint64, etc.)
 #include "param.h"  // contains kernel parameters like NCPU (number of CPUs)
 #include "memlayout.h" // defines the memory layout of the system
@@ -43,7 +44,7 @@ void start() {
     // mret will jump to supervisor mode and execute the address in mepc
     
     // first, set up mstatus register to control privilege transition
-    unsigned long x = r_mstatus(); // read current machine status register
+    unsigned long x = read_machine_status_register(); // read current machine status register
     
     // mstatus.MPP (machine previous privilege) controls what privilege level
     // we'll be in after executing mret instruction
@@ -54,19 +55,19 @@ void start() {
     x |= MSTATUS_MPP_S;
     
     // write back the modified status register
-    w_mstatus(x);
+    write_machine_status_register(x);
 
     // set mepc (machine exception program counter) to main function
     // when we execute mret, cpu will jump to this address
     // the medany code model is required because it allows position-independent code
-    w_mepc((uint64)main);
+    write_machine_exception_program_counter_register((uint64)main);
 
     // disable paging initially (virtualization)
     // we'll enable paging later after setting up page tables
     // satp (supervisor address translation and protection) controls virtual memory
     // setting it to 0 disables virtual memory - all addresses are physical
     // explicitly ensures physical addressing
-    w_satp(0);
+    write_supervisor_address_translation_and_protection_register(0);
 
     // delegate interrupts and exceptions to supervisor mode
     // by default, all traps go to machine mode
@@ -75,12 +76,12 @@ void start() {
     // medeleg = machine exception delegation register (csr 0x302)
     // controls which exceptions get delegated from machine mode to supervisor mode
     // each bit corresponds to a specific exception cause number
-    w_medeleg(0xffff); 
+    write_machine_exception_delegation_register(0xffff); 
 
     // mideleg = machine interrupt delegation register (csr 0x303) 
     // controls which interrupts get delegated from machine mode to supervisor mode
     // each bit corresponds to a specific interrupt cause number
-    w_mideleg(0xffff);
+    write_machine_interrupt_delegation_register(0xffff);
     
     // enable interrupts in supervisor mode
     // sie (supervisor interrupt enable) controls which interrupt types are enabled
@@ -88,7 +89,7 @@ void start() {
     // SEIE = supervisor external interrupt enable (devices) bit 
     // STIE = supervisor timer interrupt enable (for preemptive scheduling) bit
     // SSIE = supervisor software interrupt enable (inter-processor interrupts) bit
-    w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);
+    write_supervisor_interrupt_enable_register(read_supervisor_interrupt_enable_register() | SIE_SEIE | SIE_STIE | SIE_SSIE);
 
     // configure physical memory protection (PMP)
     // by default, supervisor mode cannot access any physical memory
@@ -119,7 +120,6 @@ void start() {
     // 2. jumps to address in mepc (main function)
     // 3. enables interrupts if mstatus.MPIE is set
     asm volatile("mret");
-    
 }
 
 // configure timer interrupts for preemptive scheduling
@@ -128,7 +128,7 @@ void start() {
 void timerinit()
 {
     // enable supervisor-mode timer interrupts in machine interrupt enable register
-    w_mie(r_mie() | MIE_STIE);
+    write_machine_status_register(read_machine_status_register() | MIE_STIE);
     
     // enable sstc extension (supervisor timer compare)
     // this allows supervisor mode to directly program timer interrupts
