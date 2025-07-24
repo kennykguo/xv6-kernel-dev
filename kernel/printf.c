@@ -21,7 +21,7 @@ volatile int panicked = 0;
 static struct {
   struct spinlock lock;
   int locking;
-} pr;
+} printf_lock;
 
 static char digits[] = "0123456789abcdef";
 
@@ -79,25 +79,33 @@ printptr(uint64 x)
     consputc(digits[x >> (sizeof(uint64) * 8 - 4)]);
 }
 
-// formatted print to console - the heart of kernel debugging and user output
+// formatted print to console
 // variadic function that accepts format string and variable arguments (like standard printf)
 // this is the main entry point for all kernel print statements including boot messages
+// the ... is the variadic arguments syntax in C. It allows the function to accept a variable number of arguments after the required format_string parameter.
+// the function uses va_list, va_start(), va_arg(), and va_end() macros to access these variable arguments at runtime.
 int printf(char *format_string, ...) {
-  va_list argument_pointer; // variadic argument list for accessing variable arguments
-  int format_index, current_character, format_specifier_char, next_char, third_char, should_use_locking;
+  va_list argument_pointer; // variadic argument list for accessing variable arguments - defined in __stdarg_va_list.h
+  int format_index, // - tracks current position in format string during parsing
+      current_character, // - holds current character being processed from format string
+      format_specifier_char, // - character immediately after % in format specifiers
+      next_char, // - second character after % for multi-char specifiers like %ld
+      third_char, // - third character after % for three-char specifiers like %lld
+      should_use_locking; // - flag to determine if printf locking is enabled
+  
   char *string_argument;
 
   // determine if we should use locking to prevent interleaved output from multiple cpus
-  // pr.locking is enabled after printfinit() to synchronize printf calls
-  should_use_locking = pr.locking;
+  // printf_lock.locking is enabled after printf_init() to synchronize printf calls
+  should_use_locking = printf_lock.locking;
   if(should_use_locking)
-    acquire(&pr.lock);
+    acquire(&printf_lock.lock);
 
   // initialize variadic argument processing
   // va_start sets up argument_pointer to access arguments after format_string
   va_start(argument_pointer, format_string);
   
-  // main formatting loop: process each character in the format string
+  // main formatting loop - process each character in the format string
   // walk through format string character by character until null terminator
   for(format_index = 0; (current_character = format_string[format_index] & 0xff) != 0; format_index++) {
     
@@ -111,114 +119,107 @@ int printf(char *format_string, ...) {
     // found '%' - this starts a format specifier
     // advance past the '%' and examine the format specifier character(s)
     format_index++;
-    format_specifier_char = format_string[format_index + 0] & 0xff;
     next_char = third_char = 0;
-
     // look ahead to handle multi-character format specifiers like %ld, %lld
-    if(format_specifier_char) next_char = format_string[format_index + 1] & 0xff;
-    if(next_char) third_char = format_string[format_index + 2] & 0xff;
+    format_specifier_char = format_string[format_index + 0] & 0xff;
+    if(format_specifier_char) {
+      next_char = format_string[format_index + 1] & 0xff;
+    }
+    if(next_char) {
+      third_char = format_string[format_index + 2] & 0xff;
+    }
 
     // format specifier parsing and argument processing
-    // handle different format types: %d (decimal), %x (hex), %s (string), %p (pointer), etc.
-    
+    // checked in order of fewest characters to lowest characters - this logic will always correctly parse the correct formatter
+    // handle different format types - %d (decimal), %x (hex), %s (string), %p (pointer), etc.
+    // %d - signed decimal integer
     if(format_specifier_char == 'd'){
-      // %d: signed decimal integer
       printint(va_arg(argument_pointer, int), 10, 1);
-    } else if(format_specifier_char == 'l' && next_char == 'd'){
-      // %ld: long signed decimal integer (64-bit)
+    } 
+    else if(format_specifier_char == 'l' && next_char == 'd'){
+      // %ld - long signed decimal integer (64-bit)
       printint(va_arg(argument_pointer, uint64), 10, 1);
       format_index += 1; // skip over the 'd' since we processed "ld"
-    } else if(format_specifier_char == 'l' && next_char == 'l' && third_char == 'd'){
-      // %lld: long long signed decimal integer (64-bit)
+    } 
+    else if(format_specifier_char == 'l' && next_char == 'l' && third_char == 'd'){
+      // %lld - long long signed decimal integer (64-bit)
       printint(va_arg(argument_pointer, uint64), 10, 1);
       format_index += 2; // skip over "ld" since we processed "lld"
-    } else if(format_specifier_char == 'u'){
-      // %u: unsigned decimal integer
+    } 
+    else if(format_specifier_char == 'u'){
+      // %u - unsigned decimal integer
       printint(va_arg(argument_pointer, int), 10, 0);
-    } else if(format_specifier_char == 'l' && next_char == 'u'){
-      // %lu: long unsigned decimal integer (64-bit)
+    } 
+    else if(format_specifier_char == 'l' && next_char == 'u'){
+      // %lu - long unsigned decimal integer (64-bit)
       printint(va_arg(argument_pointer, uint64), 10, 0);
       format_index += 1;
-    } else if(format_specifier_char == 'l' && next_char == 'l' && third_char == 'u'){
-      // %llu: long long unsigned decimal integer (64-bit)
+    } 
+    else if(format_specifier_char == 'l' && next_char == 'l' && third_char == 'u'){
+      // %llu - long long unsigned decimal integer (64-bit)
       printint(va_arg(argument_pointer, uint64), 10, 0);
       format_index += 2;
-    } else if(format_specifier_char == 'x'){
-      // %x: hexadecimal integer (lowercase)
+    } 
+    else if(format_specifier_char == 'x'){
+      // %x - hexadecimal integer (lowercase)
       printint(va_arg(argument_pointer, int), 16, 0);
-    } else if(format_specifier_char == 'l' && next_char == 'x'){
-      // %lx: long hexadecimal integer (64-bit)
+    } 
+    else if(format_specifier_char == 'l' && next_char == 'x'){
+      // %lx - long hexadecimal integer (64-bit)
       printint(va_arg(argument_pointer, uint64), 16, 0);
       format_index += 1;
-    } else if(format_specifier_char == 'l' && next_char == 'l' && third_char == 'x'){
-      // %llx: long long hexadecimal integer (64-bit)
+    } 
+    else if(format_specifier_char == 'l' && next_char == 'l' && third_char == 'x'){
+      // %llx - long long hexadecimal integer (64-bit)
       printint(va_arg(argument_pointer, uint64), 16, 0);
       format_index += 2;
-    } else if(format_specifier_char == 'p'){
-      // %p: pointer address (formatted as 0x... in hexadecimal)
+    } 
+    else if(format_specifier_char == 'p'){
+      // %p - pointer address (formatted as 0x... in hexadecimal)
       printptr(va_arg(argument_pointer, uint64));
-    } else if(format_specifier_char == 's'){
-      // %s: null-terminated string
-      if((string_argument = va_arg(argument_pointer, char*)) == 0)
+    } 
+    // special type of formatter - string
+    // %s - null-terminated string
+    else if(format_specifier_char == 's'){
+      string_argument = va_arg(argument_pointer, char*);
+      // IF THE POINTER IS pointing to NULL (do not confuse with an actual null byte) - defined as (void*)0
+      // null ptr != null byte
+      if(string_argument == 0) {
         string_argument = "(null)"; // handle null pointer gracefully
+      }
       // output each character of the string
-      for(; *string_argument; string_argument++)
+      // loop until null byte found (memory with value 0)
+      for(; *string_argument; string_argument++) {
         consputc(*string_argument);
-    } else if(format_specifier_char == '%'){
-      // %%: literal percent character
+      }
+    }
+    else if(format_specifier_char == '%'){
+      // %% - literal percent character
       consputc('%');
-    } else if(format_specifier_char == 0){
+    }
+    else if(format_specifier_char == 0){
       // format string ended with '%' - break out of loop
       break;
-    } else {
-      // unknown format specifier - print it literally to draw attention
-      consputc('%');
+    }
+    else {
+      // unknown format specifier - print it anyways
+      consputc('<UNKNOWN CHARACTER- - ->');
       consputc(format_specifier_char);
     }
-
-#if 0
-    switch(c){
-    case 'd':
-      printint(va_arg(ap, int), 10, 1);
-      break;
-    case 'x':
-      printint(va_arg(ap, int), 16, 1);
-      break;
-    case 'p':
-      printptr(va_arg(ap, uint64));
-      break;
-    case 's':
-      if((s = va_arg(ap, char*)) == 0)
-        s = "(null)";
-      for(; *s; s++)
-        consputc(*s);
-      break;
-    case '%':
-      consputc('%');
-      break;
-    default:
-      // Print unknown % sequence to draw attention.
-      consputc('%');
-      consputc(c);
-      break;
-    }
-#endif
-  }
   
   // clean up variadic argument processing
   va_end(argument_pointer);
   
   // release the printf lock if we acquired it
   if(should_use_locking)
-    release(&pr.lock);
+    release(&printf_lock.lock);
 
   return 0;
 }
 
-void panic(char *s)
-{
-  pr.locking = 0;
-  printf("panic: ");
+void panic(char *s) {
+  printf_lock.locking = 0;
+  printf("panic - ");
   printf("%s\n", s);
   panicked = 1; // freeze uart output from other CPUs
   // Infinite loop crashes program
@@ -228,8 +229,8 @@ void panic(char *s)
 
 // initialize printf subsystem
 // called early in main() to set up synchronization for printf
-void printfinit(void)
+void printf_init(void)
 {
-  init_lock(&pr.lock, "pr"); // initialize spinlock for printf synchronization
-  pr.locking = 1; // enable locking to prevent interleaved output from multiple cpus
+  init_lock(&printf_lock.lock, "printf"); // initialize spinlock for printf synchronization
+  printf_lock.locking = 1; // ENABLE locking to prevent interleaved output from multiple cpus (DOES NOT LOCK***)
 }

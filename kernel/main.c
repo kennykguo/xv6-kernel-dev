@@ -11,14 +11,16 @@ volatile static int started = 0;
 // main kernel initialization function
 // called from start() after transitioning to supervisor mode
 // this function initializes all major kernel subsystems in dependency order
+
 void main() {
     // only cpu 0 does the main initialization to avoid race conditions
     // other cpus wait until initialization is complete, then do minimal setup
     if(cpuid() == 0){
+
         // initialize console first so we can print debug/status messages
         // must come early since other init functions may want to print messages
         console_init();
-        printfinit();
+        printf_init();
         printf("\n");
         printf("xv6 kernel is booting\n");
         printf("hello kenny!\n");
