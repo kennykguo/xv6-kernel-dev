@@ -212,11 +212,12 @@ void console_intr(int c)
 
 
 // initialize console hardware and connect it to the file system
+// x
 void console_init(void)
 {
   // initialize the console lock to synchronize access between cpus
   // this func creates the lock for the console lock struct
-  init_lock(&cons.lock, "cons");
+  create_lock(&cons.lock, "cons");
 
   // initialize the uart hardware for serial communication
   // uart (universal asynchronous receiver/transmitter) handles serial i/o

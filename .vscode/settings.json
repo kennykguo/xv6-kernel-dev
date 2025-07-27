@@ -64,6 +64,8 @@
     "types.h": "c",
     "param.h": "c",
     "mutex": "c",
-    "shared_mutex": "c"
+    "shared_mutex": "c",
+    "memlayout.h": "c",
+    "defs.h": "c"
   }
 }

@@ -38,7 +38,7 @@ void trapinit(void)
 {
   // initialize the lock that protects the global timer tick counter
   // this lock prevents race conditions when multiple cpus access timer_ticks_since_boot
-  init_lock(&tickslock, "time");
+  create_lock(&tickslock, "time");
 }
 
 // configure this cpu core to handle traps and exceptions while running kernel code

@@ -61,8 +61,8 @@ void            ramdiskrw(struct buf*);
 
 // kalloc.c
 void*           kalloc(void);
-void            kfree(void *);
-void            kinit(void);
+void            kernel_free_page(void *);
+void            kernel_init_memory_allocator(void);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -113,7 +113,7 @@ void            swtch(struct context*, struct context*);
 // spinlock.c
 void            acquire(struct spinlock*);
 int             holding(struct spinlock*);
-void            init_lock(struct spinlock*, char*);
+void            create_lock(struct spinlock*, char*);
 void            release(struct spinlock*);
 void            push_off(void);
 void            pop_off(void);

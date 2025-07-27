@@ -113,7 +113,7 @@ void uart_init(void) {
   // the uart transmit buffer is shared between different kernel threads
   // this spinlock ensures only one cpu can modify the transmit buffer at a time
   // prevents race conditions when multiple cpus try to print simultaneously
-  init_lock(&uart_transmit_buffer_lock, "uart_transmit_buffer_lock");
+  create_lock(&uart_transmit_buffer_lock, "uart_transmit_buffer_lock");
 }
 
 

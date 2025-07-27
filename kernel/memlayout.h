@@ -35,8 +35,8 @@
 // the kernel uses physical memory thus:
 // 80000000 -- entry.S, then kernel text and data
 //             kernel code starts here and grows upward
-// end       -- start of kernel page allocation area  
-//             'end' symbol marks end of kernel binary
+// kernel_binary_end -- start of kernel page allocation area  
+//             'kernel_binary_end' symbol marks end of kernel binary
 // PHYSTOP   -- end of RAM used by the kernel
 //             we limit ourselves to 128MB of RAM
 

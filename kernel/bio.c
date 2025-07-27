@@ -38,7 +38,7 @@ binit(void)
 {
   struct buf *b;
 
-  init_lock(&bcache.lock, "bcache");
+  create_lock(&bcache.lock, "bcache");
 
   // Create linked list of buffers
   bcache.head.prev = &bcache.head;

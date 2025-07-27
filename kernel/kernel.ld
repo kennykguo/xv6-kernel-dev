@@ -55,5 +55,5 @@ SECTIONS
   }
 
   /* End of all sections */
-  PROVIDE(end = .); /* PROVIDED AS symbol */
+  PROVIDE(kernel_binary_end = .); /* PROVIDED AS symbol */
 }

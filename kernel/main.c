@@ -27,9 +27,9 @@ void main() {
         printf("\n");
         
         // memory management initialization - must come early since everything needs memory
-        // kinit() sets up the physical page allocator
-        // physical memory is divided into 4KB pages, and kinit() creates a free list
-        kinit();         
+        // kernel_init_memory_allocator() sets up the physical page allocator
+        // physical memory is divided into 4KB pages, and creates a free list
+        kernel_init_memory_allocator();         
         
         // virtual memory initialization
         // kvminit() creates the kernel's page table mapping virtual addresses to physical

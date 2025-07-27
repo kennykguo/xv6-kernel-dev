@@ -66,12 +66,12 @@ void procinit(void)
   struct proc *p;
   
   // initialize locks for process management
-  init_lock(&pid_lock, "nextpid");    // protects pid allocation
-  init_lock(&wait_lock, "wait_lock"); // coordinates parent/child relationships
+  create_lock(&pid_lock, "nextpid");    // protects pid allocation
+  create_lock(&wait_lock, "wait_lock"); // coordinates parent/child relationships
   
   // initialize each process slot in the process table
   for(p = proc; p < &proc[NPROC]; p++) {
-      init_lock(&p->lock, "proc");           // protects individual process fields
+      create_lock(&p->lock, "proc");           // protects individual process fields
       p->state = UNUSED;                    // mark slot as available
       p->kstack = KSTACK((int) (p - proc)); // remember kernel stack virtual address
   }
@@ -176,7 +176,7 @@ static void
 freeproc(struct proc *p)
 {
   if(p->trapframe)
-    kfree((void*)p->trapframe);
+    kernel_free_page((void*)p->trapframe);
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);

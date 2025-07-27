@@ -84,6 +84,7 @@ printptr(uint64 x)
 // this is the main entry point for all kernel print statements including boot messages
 // the ... is the variadic arguments syntax in C. It allows the function to accept a variable number of arguments after the required format_string parameter.
 // the function uses va_list, va_start(), va_arg(), and va_end() macros to access these variable arguments at runtime.
+// x
 int printf(char *format_string, ...) {
   va_list argument_pointer; // variadic argument list for accessing variable arguments - defined in __stdarg_va_list.h
   int format_index, // - tracks current position in format string during parsing
@@ -203,10 +204,11 @@ int printf(char *format_string, ...) {
     }
     else {
       // unknown format specifier - print it anyways
-      consputc('<UNKNOWN CHARACTER- - ->');
+      consputc(current_character);
       consputc(format_specifier_char);
     }
   
+  }
   // clean up variadic argument processing
   va_end(argument_pointer);
   
@@ -222,15 +224,16 @@ void panic(char *s) {
   printf("panic - ");
   printf("%s\n", s);
   panicked = 1; // freeze uart output from other CPUs
-  // Infinite loop crashes program
+  // infinite loop crashes program
   for(;;)
     ;
 }
 
 // initialize printf subsystem
 // called early in main() to set up synchronization for printf
+// x
 void printf_init(void)
 {
-  init_lock(&printf_lock.lock, "printf"); // initialize spinlock for printf synchronization
+  create_lock(&printf_lock.lock, "printf"); // initialize spinlock for printf synchronization
   printf_lock.locking = 1; // ENABLE locking to prevent interleaved output from multiple cpus (DOES NOT LOCK***)
 }

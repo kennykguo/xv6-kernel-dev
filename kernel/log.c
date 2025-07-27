@@ -57,7 +57,7 @@ initlog(int dev, struct superblock *sb)
   if (sizeof(struct logheader) >= BSIZE)
     panic("initlog: too big logheader");
 
-  init_lock(&log.lock, "log");
+  create_lock(&log.lock, "log");
   log.start = sb->logstart;
   log.size = sb->nlog;
   log.dev = dev;

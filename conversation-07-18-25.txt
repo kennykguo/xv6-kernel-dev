@@ -164,7 +164,7 @@
        193    {
        194 -    
        194 +    // initialize the console lock to synchronize access between cpus
-       195      init_lock(&cons.lock, "cons");
+       195      create_lock(&cons.lock, "cons");
        196    
        197 -    // Wires are labelled with receiver and transmitter
        198 -    uartinit(); // UART is the universal async receiver transmit - transmitting data between 2 directions
@@ -197,9 +197,9 @@
        201 +  // called early in main() to set up synchronization for printf
        202    void printfinit(void)
        203    {
-       204 -    init_lock(&pr.lock, "pr"); // Start spinlock
+       204 -    create_lock(&pr.lock, "pr"); // Start spinlock
        205 -    pr.locking = 1; 
-       204 +    init_lock(&pr.lock, "pr"); // initialize spinlock for printf synchronization
+       204 +    create_lock(&pr.lock, "pr"); // initialize spinlock for printf synchronization
        205 +    pr.locking = 1; // enable locking to prevent interleaved output from multiple cpus
        206    }
 

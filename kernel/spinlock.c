@@ -8,8 +8,9 @@
 #include "proc.h"
 #include "defs.h"
 
-// Mutual exclusion spinlock
-void init_lock(struct spinlock *lk, char *name)
+// mutual exclusion spinlock
+// x
+void create_lock(struct spinlock *lk, char *name)
 {
   lk->name = name;
   lk->locked = 0;

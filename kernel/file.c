@@ -25,7 +25,7 @@ struct {
 void
 fileinit(void)
 {
-  init_lock(&ftable.lock, "ftable");
+  create_lock(&ftable.lock, "ftable");
 }
 
 // Allocate a file structure.

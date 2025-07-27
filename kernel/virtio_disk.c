@@ -63,7 +63,7 @@ virtio_disk_init(void)
 {
   uint32 status = 0;
 
-  init_lock(&disk.vdisk_lock, "virtio_disk");
+  create_lock(&disk.vdisk_lock, "virtio_disk");
 
   if(*R(VIRTIO_MMIO_MAGIC_VALUE) != 0x74726976 ||
      *R(VIRTIO_MMIO_VERSION) != 2 ||

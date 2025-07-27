@@ -34,7 +34,7 @@ pipealloc(struct file **f0, struct file **f1)
   pi->writeopen = 1;
   pi->nwrite = 0;
   pi->nread = 0;
-  init_lock(&pi->lock, "pipe");
+  create_lock(&pi->lock, "pipe");
   (*f0)->type = FD_PIPE;
   (*f0)->readable = 1;
   (*f0)->writable = 0;
@@ -47,7 +47,7 @@ pipealloc(struct file **f0, struct file **f1)
 
  bad:
   if(pi)
-    kfree((char*)pi);
+    kernel_free_page((char*)pi);
   if(*f0)
     fileclose(*f0);
   if(*f1)
@@ -68,7 +68,7 @@ pipeclose(struct pipe *pi, int writable)
   }
   if(pi->readopen == 0 && pi->writeopen == 0){
     release(&pi->lock);
-    kfree((char*)pi);
+    kernel_free_page((char*)pi);
   } else
     release(&pi->lock);
 }
