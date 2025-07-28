@@ -32,10 +32,10 @@ void main() {
         kernel_init_memory_allocator();         
         
         // virtual memory initialization
-        // kvminit() creates the kernel's page table mapping virtual addresses to physical
+        // initialize_kernel_virtual_memory() creates the kernel's page table mapping virtual addresses to physical
         // the kernel runs in virtual memory for protection and convenience
-        kvminit();       
-        
+        initialize_kernel_virtual_memory();  
+
         // enable virtual memory (paging) on this cpu
         // kvminithart() loads the page table into the mmu and turns on address translation
         kvminithart();   

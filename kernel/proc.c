@@ -38,24 +38,24 @@ struct spinlock wait_lock;
 // allocate a page for each process's kernel stack
 // map it high in memory, followed by an invalid guard page
 // called during kernel initialization to set up kernel stacks
-void proc_mapstacks(pagetable_t kpgtbl)
+void allocate_and_map_process_kernel_stacks(pagetable_t kernel_page_table)
 {
-  struct proc *p;
+  struct proc *current_process;
   
   // iterate through all possible processes
-  for(p = proc; p < &proc[NPROC]; p++) {
+  for(current_process = proc; current_process < &proc[NPROC]; current_process++) {
     // allocate one physical page for this process's kernel stack
-    char *pa = kalloc();
-    if(pa == 0)
+    char *allocated_stack_physical_address = kalloc();
+    if(allocated_stack_physical_address == 0)
       panic("kalloc");
       
     // calculate virtual address for this process's kernel stack
     // KSTACK() places stacks high in virtual memory with guard pages between them
-    uint64 va = KSTACK((int) (p - proc));
+    uint64 stack_virtual_address = KSTACK((int) (current_process - proc));
     
     // map the physical page into kernel page table at calculated virtual address
     // PTE_R | PTE_W makes the stack readable and writable
-    kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+    map_kernel_virtual_to_physical(kernel_page_table, stack_virtual_address, (uint64)allocated_stack_physical_address, PGSIZE, PTE_R | PTE_W);
   }
 }
 
@@ -207,7 +207,7 @@ proc_pagetable(struct proc *p)
   // at the highest user virtual address.
   // only the supervisor uses it, on the way
   // to/from user space, so not PTE_U.
-  if(mappages(pagetable, TRAMPOLINE, PGSIZE,
+  if(create_page_table_mappings(pagetable, TRAMPOLINE, PGSIZE,
               (uint64)trampoline, PTE_R | PTE_X) < 0){
     uvmfree(pagetable, 0);
     return 0;
@@ -215,7 +215,7 @@ proc_pagetable(struct proc *p)
 
   // map the trapframe page just below the trampoline page, for
   // trampoline.S.
-  if(mappages(pagetable, TRAPFRAME, PGSIZE,
+  if(create_page_table_mappings(pagetable, TRAPFRAME, PGSIZE,
               (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
     uvmfree(pagetable, 0);

@@ -111,11 +111,12 @@ void kernel_free_page(void *page_address)
 // allocate one 4096-byte page of physical memory from the free pool
 // returns a kernel-usable pointer to the allocated page
 // returns null pointer (0) if no memory is available (out of memory condition)
+// x
 void * kalloc(void)
 {
   struct free_page_list_node *allocated_page_node;
 
-  // critical section: atomically remove page from free list
+  // critical section - atomically remove page from free list
   // prevents race conditions when multiple cpus allocate simultaneously
   acquire(&kernel_memory_allocator.physical_memory_lock);
   allocated_page_node = kernel_memory_allocator.free_page_list_head;  // get current head of free list
@@ -123,11 +124,10 @@ void * kalloc(void)
     kernel_memory_allocator.free_page_list_head = allocated_page_node->next_free_page; // advance head to next node
   release(&kernel_memory_allocator.physical_memory_lock);
 
-  // security feature: fill allocated page with garbage to catch uninitialized read bugs
+  // security feature - fill allocated page with garbage to catch uninitialized read bugs
   // prevents information leakage and forces code to properly initialize memory
   // different pattern (5) than kernel_free_page (1) to help distinguish allocation vs free bugs
   if(allocated_page_node)
     memset((char*)allocated_page_node, 5, PGSIZE); 
-    
   return (void*)allocated_page_node;  // return pointer to allocated page (or null if out of memory)
 }

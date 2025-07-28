@@ -23,63 +23,68 @@
 // the kernel's page table - maps kernel virtual addresses to physical addresses
 // kernel runs in virtual memory just like user processes
 pagetable_t kernel_pagetable;
+// 512 PTEs
 
 // linker symbols marking sections of kernel binary
 extern char etext[];  // kernel.ld sets this to end of kernel code.
 extern char trampoline[]; // trampoline.S - assembly code for kernel entry/exit
 
-// create a direct-map page table for the kernel.
+// create a direct-map page table for the kernel
 // "direct-map" means virtual address = physical address for most mappings
 // this simplifies kernel memory management
-pagetable_t kvmmake(void)
+pagetable_t create_kernel_page_table(void)
 {
-  pagetable_t kpgtbl;
+  pagetable_t kernel_root_page_table;
 
   // allocate a physical page to hold the root page table
   // page table is just an array of 512 64-bit entries (4KB total)
-  kpgtbl = (pagetable_t) kalloc();
-  memset(kpgtbl, 0, PGSIZE); // clear all entries (invalid by default)
+  kernel_root_page_table = (pagetable_t) kalloc();
+  memset(kernel_root_page_table, 0, PGSIZE); // clear all entries (invalid by default)
+
 
   // set up kernel mappings for memory-mapped devices
   // these mappings allow kernel to access hardware by reading/writing memory
   
   // uart registers - for console i/o
-  kvmmap(kpgtbl, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+  map_kernel_virtual_to_physical(kernel_root_page_table, UART0, UART0, PGSIZE, PTE_R | PTE_W);
 
   // virtio mmio disk interface - for file system storage
-  kvmmap(kpgtbl, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+  map_kernel_virtual_to_physical(kernel_root_page_table, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
 
   // PLIC (platform-level interrupt controller) - for handling device interrupts
   // large mapping (64MB) covers all PLIC registers
-  kvmmap(kpgtbl, PLIC, PLIC, 0x4000000, PTE_R | PTE_W);
+  map_kernel_virtual_to_physical(kernel_root_page_table, PLIC, PLIC, 0x4000000, PTE_R | PTE_W);
 
   // map kernel text (code) as executable and read-only.
   // etext symbol marks end of kernel code section
   // PTE_X makes pages executable, PTE_R makes them readable
-  kvmmap(kpgtbl, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+  map_kernel_virtual_to_physical(kernel_root_page_table, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
 
   // map kernel data and remaining physical RAM as read-write
   // everything after kernel code can be read and written but not executed
-  kvmmap(kpgtbl, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+  map_kernel_virtual_to_physical(kernel_root_page_table, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
 
   // map the trampoline page to highest virtual address in kernel space
   // trampoline contains assembly code for switching between user/kernel mode
   // it must be mapped at same virtual address in user and kernel page tables
-  kvmmap(kpgtbl, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  map_kernel_virtual_to_physical(kernel_root_page_table, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 
   // allocate and map a kernel stack for each process.
   // each process gets its own kernel stack for use when running in kernel mode
-  proc_mapstacks(kpgtbl);
+  allocate_and_map_process_kernel_stacks(kernel_root_page_table);
   
-  return kpgtbl;
+  return kernel_root_page_table;
 }
+
+
 
 // initialize the kernel page table
 // called once during kernel startup
-void kvminit(void)
+void initialize_kernel_virtual_memory(void)
 {
-  kernel_pagetable = kvmmake();
+  kernel_pagetable = create_kernel_page_table();
 }
+
 
 // switch hardware page table register to the kernel's page table,
 // and enable paging.
@@ -119,38 +124,41 @@ void kvminithart()
 //    0..11 -- 12 bits of byte offset within the page (4096 bytes)
 //
 // this gives 512 * 512 * 512 * 4096 = 512 GB virtual address space
-pte_t * walk(pagetable_t pagetable, uint64 va, int alloc)
+pte_t * walk_page_table(pagetable_t page_table_root, uint64 virtual_address, int should_allocate_missing_tables)
 {
   // check if virtual address is within valid range
-  if(va >= MAXVA)
-    panic("walk");
+  if(virtual_address >= MAXVA)
+    panic("walk_page_table not in valid range");
 
   // walk down the 3-level page table hierarchy
   // start at level 2 (root), walk down to level 0 (leaf)
-  for(int level = 2; level > 0; level--) {
+  for(int current_page_table_level = 2; current_page_table_level > 0; current_page_table_level--) {
     // get pointer to page table entry for this level
     // PX() extracts the appropriate 9-bit index from virtual address
-    pte_t *pte = &pagetable[PX(level, va)];
+    pte_t* current_level_page_table_entry = &page_table_root[PX(current_page_table_level, virtual_address)];
     
-    if(*pte & PTE_V) {
+    if(*current_level_page_table_entry & PTE_V) {
       // page table entry is valid - extract physical address of next level
-      pagetable = (pagetable_t)PTE2PA(*pte);
-    } else {
+      page_table_root = (pagetable_t)PTE2PA(*current_level_page_table_entry);
+    } 
+    else {
       // page table entry is invalid - need to allocate new page table
-      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
+      if(!should_allocate_missing_tables || (page_table_root = (pde_t*)kalloc()) == 0){
+        printf("not allocating page table bcz invalid entry");
         return 0; // allocation failed or not requested
+      }
         
       // clear new page table (all entries start invalid)
-      memset(pagetable, 0, PGSIZE);
+      memset(page_table_root, 0, PGSIZE);
 
-      // install physical address of new page table in current PTE
+      // install physical address of new page table in current page table entry
       // set valid bit to make this entry active
-      *pte = PA2PTE(pagetable) | PTE_V;
+      *current_level_page_table_entry = PA2PTE(page_table_root) | PTE_V;
     }
   }
   
-  // return pointer to final level-0 PTE that maps the virtual address
-  return &pagetable[PX(0, va)];
+  // return pointer to final level-0 page table entry that maps the virtual address
+  return &page_table_root[PX(0, virtual_address)];
 }
 
 // Look up a virtual address, return the physical address,
@@ -165,7 +173,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
   if(va >= MAXVA)
     return 0;
 
-  pte = walk(pagetable, va, 0);
+  pte = walk_page_table(pagetable, va, 0);
   if(pte == 0)
     return 0;
   if((*pte & PTE_V) == 0)
@@ -176,47 +184,63 @@ walkaddr(pagetable_t pagetable, uint64 va)
   return pa;
 }
 
-// add a mapping to the kernel page table.
+// add a mapping to the kernel page table
 // only used when booting.
-// does not flush TLB or enable paging.
-void kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
+// does not flush TLB or enable paging
+void map_kernel_virtual_to_physical(pagetable_t kernel_page_table, uint64 virtual_address, uint64 physical_address, uint64 mapping_size, int page_permissions)
 {
-  if(mappages(kpgtbl, va, sz, pa, perm) != 0)
-    panic("kvmmap");
+  if(create_page_table_mappings(kernel_page_table, virtual_address, mapping_size, physical_address, page_permissions) != 0)
+    panic("map_kernel_virtual_to_physical");
 }
 
-// Create PTEs for virtual addresses starting at va that refer to
-// physical addresses starting at pa.
-// va and size MUST be page-aligned.
-// Returns 0 on success, -1 if walk() couldn't
-// allocate a needed page-table page.
-int mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
+// create page table entries for virtual addresses starting at virtual_address_start that refer to physical addresses starting at physical_address_start
+// virtual_address_start and total_mapping_size MUST be page-aligned
+// returns 0 on success, -1 if walk_page_table() couldn't allocate a needed page-table page
+// x
+int create_page_table_mappings(pagetable_t page_table, uint64 virtual_address_start, uint64 total_mapping_size, uint64 physical_address_start, int page_permissions)
 {
-  uint64 a, last;
-  pte_t *pte;
+  uint64 current_virtual_address, last_virtual_address;
+  pte_t *current_page_table_entry;
 
-  if((va % PGSIZE) != 0)
-    panic("mappages: va not aligned");
+  if((virtual_address_start % PGSIZE) != 0)
+    panic("create_page_table_mappings: va not aligned");
 
-  if((size % PGSIZE) != 0)
-    panic("mappages: size not aligned");
+  if((total_mapping_size % PGSIZE) != 0)
+    panic("create_page_table_mappings: size not aligned");
 
-  if(size == 0)
-    panic("mappages: size");
+  if(total_mapping_size == 0)
+    panic("create_page_table_mappings: size");
      
-  a = va;
-  last = va + size - PGSIZE;
-  for(;;){
-    if((pte = walk(pagetable, a, 1)) == 0) // Walk through the page table
-      return -1; // If walk didn't find an entry, return -1
-    // PTE pointer now points to a valid PTE
-    if(*pte & PTE_V)
-      panic("mappages: remap");
-    *pte = PA2PTE(pa) | perm | PTE_V;
-    if(a == last)
-      break;
-    a += PGSIZE;
-    pa += PGSIZE;
+  current_virtual_address = virtual_address_start;
+  last_virtual_address = virtual_address_start + total_mapping_size - PGSIZE; // each entry should hold a page worth, thats why we subtract pgsize
+  
+  // iterate through each page in the mapping range
+  while(1) {
+    // find the page table entry for this virtual address
+    // allocate intermediate page tables if needed (parameter 1 means allocate)
+    current_page_table_entry = walk_page_table(page_table, current_virtual_address, 1);
+    if(current_page_table_entry == 0) {
+      return -1; // if walk couldn't allocate needed page tables, return error
+    }
+    
+    // check if this virtual address is already mapped or page table entry pointer now points to a valid page table entry
+    if(*current_page_table_entry & PTE_V) {
+      panic("virtual address is already mapped");
+    }
+    
+    // create the mapping by setting the page table entry
+    // PA2PTE converts physical address to page table entry format
+    // combine with permissions and valid bit
+    *current_page_table_entry = PA2PTE(physical_address_start) | page_permissions | PTE_V;
+    
+    // check if we've mapped all requested pages
+    if(current_virtual_address == last_virtual_address) {
+      break; // finished mapping all pages
+    }
+    
+    // advance to next page
+    current_virtual_address += PGSIZE;  // move to next 4KB virtual page
+    physical_address_start += PGSIZE;   // move to next 4KB physical page
   }
   return 0;
 }
@@ -234,7 +258,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
-    if((pte = walk(pagetable, a, 0)) == 0)
+    if((pte = walk_page_table(pagetable, a, 0)) == 0)
       panic("uvmunmap: walk");
     if((*pte & PTE_V) == 0)
       panic("uvmunmap: not mapped");
@@ -273,7 +297,7 @@ uvmfirst(pagetable_t pagetable, uchar *src, uint sz)
     panic("uvmfirst: more than a page");
   mem = kalloc();
   memset(mem, 0, PGSIZE);
-  mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
+  create_page_table_mappings(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
   memmove(mem, src, sz);
 }
 
@@ -296,7 +320,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       return 0;
     }
     memset(mem, 0, PGSIZE);
-    if(mappages(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
+    if(create_page_table_mappings(pagetable, a, PGSIZE, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
       kernel_free_page(mem);
       uvmdealloc(pagetable, a, oldsz);
       return 0;
@@ -368,7 +392,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
-    if((pte = walk(old, i, 0)) == 0)
+    if((pte = walk_page_table(old, i, 0)) == 0)
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
@@ -377,7 +401,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((mem = kalloc()) == 0)
       goto err;
     memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+    if(create_page_table_mappings(new, i, PGSIZE, (uint64)mem, flags) != 0){
       kernel_free_page(mem);
       goto err;
     }
@@ -396,7 +420,7 @@ uvmclear(pagetable_t pagetable, uint64 va)
 {
   pte_t *pte;
   
-  pte = walk(pagetable, va, 0);
+  pte = walk_page_table(pagetable, va, 0);
   if(pte == 0)
     panic("uvmclear");
   *pte &= ~PTE_U;
@@ -415,7 +439,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     va0 = PGROUNDDOWN(dstva);
     if(va0 >= MAXVA)
       return -1;
-    pte = walk(pagetable, va0, 0);
+    pte = walk_page_table(pagetable, va0, 0);
     if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0 ||
        (*pte & PTE_W) == 0)
       return -1;
