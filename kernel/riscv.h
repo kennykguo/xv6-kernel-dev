@@ -231,6 +231,11 @@ static inline void w_pmpaddr0(uint64 x)
 // use riscv's sv39 page table scheme.
 #define SATP_SV39 (8L << 60)
 
+// creates satp register value from page table physical address
+// satp format: [mode bits 63:60] | [asid bits 59:44] | [physical page number bits 43:0]
+// - sets sv39 mode (3-level page table)
+// - asid = 0 (no address space isolation)
+// - converts physical address to page number by right-shifting 12 bits
 #define MAKE_SATP(pagetable) (SATP_SV39 | (((uint64)pagetable) >> 12))
 
 // supervisor address translation and protection;
@@ -340,9 +345,8 @@ static inline uint64 r_ra()
   return x;
 }
 
-// flush the TLB.
-static inline void
-sfence_vma()
+// flush the TLB
+static inline void sfence_vma()
 {
   // the zero, zero means flush all TLB entries.
   asm volatile("sfence.vma zero, zero");

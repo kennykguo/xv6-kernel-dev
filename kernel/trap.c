@@ -34,7 +34,8 @@ extern int devintr();  // handle device interrupts
 
 // initialize the trap handling system for the entire kernel
 // called once during boot to set up global trap-related data structures
-void trapinit(void)
+// x
+void initialize_trap_system_globals(void)
 {
   // initialize the lock that protects the global timer tick counter
   // this lock prevents race conditions when multiple cpus access timer_ticks_since_boot
@@ -44,7 +45,8 @@ void trapinit(void)
 // configure this cpu core to handle traps and exceptions while running kernel code
 // called on each cpu during initialization to set up per-cpu trap handling
 // this is separate from usertrap handling - kernel and user traps use different vectors
-void trapinithart(void)
+// x
+void install_kernel_trap_vector_on_cpu(void)
 {
   // set supervisor trap vector register (stvec) to point to kernel trap handler
   // when a trap occurs while cpu is in supervisor mode, hardware jumps to kernelvec
@@ -162,8 +164,9 @@ void usertrapret(void)
   // sepc will be loaded into pc when sret executes
   w_sepc(current_process->trapframe->epc);
 
-  // prepare user page table identifier for trampoline
-  // satp value that will activate user process's virtual memory
+  // create satp register value for user process page table
+  // MAKE_SATP converts process page table physical address to satp format
+  // trampoline code will load this to switch from kernel to user virtual memory
   uint64 user_page_table_satp = MAKE_SATP(current_process->pagetable);
 
   // execute the actual return to user space via trampoline code

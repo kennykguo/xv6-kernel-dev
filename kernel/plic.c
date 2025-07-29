@@ -19,13 +19,13 @@
 // initialize global plic settings that apply to all cpu cores
 // called once during kernel boot to configure interrupt priorities
 // must be called before any individual cpu cores initialize their plic settings
-void
-plicinit(void)
-{
+// x
+void configure_global_interrupt_priorities(void) {
   // configure interrupt priority levels for each device
   // priority must be non-zero to enable the interrupt source (zero = disabled)
   // higher priority numbers get delivered first when multiple interrupts are pending
   
+  // emulate devices in qemu as mmapped reg
   // uart interrupt priority: set to 1 (lowest non-zero priority)
   // uart generates interrupts when characters are received or transmit buffer is empty
   *(uint32*)(PLIC + UART0_IRQ*4) = 1;
@@ -38,8 +38,7 @@ plicinit(void)
 // initialize plic settings for a specific cpu core (hart)
 // called on each cpu core during initialization to enable interrupt delivery
 // configures which interrupts this cpu will receive and at what threshold
-void
-plicinithart(void)
+void enable_interrupts_for_this_cpu(void)
 {
   int current_cpu_hart_id = cpuid();
   
@@ -47,7 +46,7 @@ plicinithart(void)
   // each bit in the enable register corresponds to an interrupt source
   // setting bit N to 1 means this cpu can receive interrupt N
   *(uint32*)PLIC_SENABLE(current_cpu_hart_id) = (1 << UART0_IRQ) | (1 << VIRTIO0_IRQ);
-
+  
   // set interrupt priority threshold for this cpu's supervisor mode
   // only interrupts with priority > threshold will be delivered to this cpu
   // setting to 0 means all enabled interrupts (priority >= 1) will be delivered

@@ -95,7 +95,7 @@ void            setkilled(struct proc*);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
 struct proc*    myproc();
-void            procinit(void);
+void            initialize_process_table(void);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            sleep(void*, struct spinlock*);
@@ -143,8 +143,8 @@ void            syscall();
 
 // trap.c
 extern uint     ticks;
-void            trapinit(void);
-void            trapinithart(void);
+void            initialize_trap_system_globals(void);
+void            install_kernel_trap_vector_on_cpu(void);
 extern struct spinlock tickslock;
 void            usertrapret(void);
 
@@ -157,7 +157,7 @@ int             uartgetc(void);
 
 // vm.c
 void            initialize_kernel_virtual_memory(void);
-void            kvminithart(void);
+void            enable_kernel_virtual_memory_on_cpu(void);
 void            map_kernel_virtual_to_physical(pagetable_t, uint64, uint64, uint64, int);
 int             create_page_table_mappings(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
@@ -175,8 +175,8 @@ int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
 
 // plic.c
-void            plicinit(void);
-void            plicinithart(void);
+void            configure_global_interrupt_priorities(void);
+void            enable_interrupts_for_this_cpu(void);
 int             plic_claim(void);
 void            plic_complete(int);
 

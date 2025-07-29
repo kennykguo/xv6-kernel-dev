@@ -89,15 +89,17 @@ void initialize_kernel_virtual_memory(void)
 // switch hardware page table register to the kernel's page table,
 // and enable paging.
 // this is where virtual memory actually gets turned on!
-void kvminithart()
+// x
+void enable_kernel_virtual_memory_on_cpu()
 {
   // memory barrier - ensure all previous writes to page table are visible
   // important for correctness on out-of-order cpus
+  // flush the TLB too
   sfence_vma();
 
-  // load page table root address into satp (supervisor address translation and protection)
-  // MAKE_SATP creates the proper satp value with mode bits
-  // after this instruction, virtual memory is ENABLED
+  // load kernel page table root address into satp register
+  // MAKE_SATP converts physical address to satp format with sv39 mode enabled
+  // after this instruction, virtual memory translation is ENABLED for kernel
   write_supervisor_address_translation_and_protection_register(MAKE_SATP(kernel_pagetable));
 
   // flush stale entries from the TLB (translation lookaside buffer)

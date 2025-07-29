@@ -63,18 +63,19 @@ void allocate_and_map_process_kernel_stacks(pagetable_t kernel_page_table)
 
 // initialize the process table
 // called once during kernel startup
-void procinit(void)
+// x
+void initialize_process_table(void)
 {
   struct proc *p;
   
   // initialize locks for process management
-  create_lock(&pid_lock, "nextpid");    // protects pid allocation
-  create_lock(&wait_lock, "wait_lock"); // coordinates parent/child relationships
+  create_lock(&pid_lock, "nextpid"); // protects pid allocation - of typedef spinlock
+  create_lock(&wait_lock, "wait_lock"); // coordinates parent/child relationships - of typedef spinlock
   
   // initialize each process slot in the process table
   for(p = proc; p < &proc[NPROC]; p++) {
-      create_lock(&p->lock, "proc");           // protects individual process fields
-      p->state = UNUSED;                    // mark slot as available
+      create_lock(&p->lock, "proc"); // create a lock for future use that protects individual process fields
+      p->state = UNUSED; // mark slot as available
       p->kstack = KSTACK((int) (p - proc)); // remember kernel stack virtual address
   }
 }

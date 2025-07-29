@@ -37,29 +37,29 @@ void main() {
         initialize_kernel_virtual_memory();  
 
         // enable virtual memory (paging) on this cpu
-        // kvminithart() loads the page table into the mmu and turns on address translation
-        kvminithart();   
+        // loads the kernel page table into satp register and turns on address translation
+        enable_kernel_virtual_memory_on_cpu();
 
         // process management initialization
-        // procinit() initializes the process table and sets up initial process structures
-        procinit();      
+        // initializes the process table, locks, and sets up initial process structures
+        initialize_process_table();      
         
         // trap/interrupt handling initialization
-        // trapinit() sets up the trap vector table for handling interrupts and exceptions
-        trapinit();      
+        // initializes global trap system locks and data structures
+        initialize_trap_system_globals();      
         
         // install kernel trap vector for this cpu
-        // trapinithart() loads the trap vector address into the stvec register
-        trapinithart();  
+        // loads the kernel trap handler address into the stvec register
+        install_kernel_trap_vector_on_cpu();  
         
         // interrupt controller initialization
-        // plicinit() configures the platform-level interrupt controller (PLIC)
-        // the PLIC routes external device interrupts to cpus
-        plicinit();      
+        // configures global interrupt priorities for all devices in the PLIC
+        // the PLIC routes external device interrupts to cpus based on priority
+        configure_global_interrupt_priorities();      
         
         // enable device interrupts for this cpu
-        // plicinithart() tells the PLIC to send interrupts to this specific cpu
-        plicinithart();  
+        // configures PLIC to send UART and disk interrupts to this specific cpu
+        enable_interrupts_for_this_cpu();  
         
         // file system initialization begins here
         // these must be done in order due to dependencies
@@ -105,13 +105,13 @@ void main() {
         
         // each additional cpu needs to:
         // enable virtual memory for itself
-        kvminithart();    
+        enable_kernel_virtual_memory_on_cpu();    
         
         // install trap vector for itself  
-        trapinithart();   
+        install_kernel_trap_vector_on_cpu();   
         
         // enable device interrupts for itself
-        plicinithart();   
+        enable_interrupts_for_this_cpu();   
     }
 
     // all cpus end up here running the scheduler
