@@ -114,35 +114,45 @@ void kvminithart()
 // - level 2: top-level page directory (root)
 // - level 1: middle-level page tables  
 // - level 0: bottom-level page tables (leaf)
-//
 // a page-table page contains 512 64-bit PTEs.
 // a 64-bit virtual address is split into five fields:
 //   39..63 -- must be zero (unused)
-//   30..38 -- 9 bits of level-2 index (512 entries)
+//   30..38 -- 9 bits of level-2 index (512 entries) -> one page's worth of PTEs
 //   21..29 -- 9 bits of level-1 index (512 entries)  
 //   12..20 -- 9 bits of level-0 index (512 entries)
 //    0..11 -- 12 bits of byte offset within the page (4096 bytes)
-//
 // this gives 512 * 512 * 512 * 4096 = 512 GB virtual address space
+// - PX(2, va): (0x123456789 >> 30) & 0x1FF = 0x48C & 0x1FF = 0x48
+// - PX(1, va): (0x123456789 >> 21) & 0x1FF = 0x91A2 & 0x1FF = 0x1A2
+// - PX(0, va): (0x123456789 >> 12) & 0x1FF = 0x1234560F1 & 0x1FF = 0x0F1
 pte_t * walk_page_table(pagetable_t page_table_root, uint64 virtual_address, int should_allocate_missing_tables)
 {
+
   // check if virtual address is within valid range
   if(virtual_address >= MAXVA)
     panic("walk_page_table not in valid range");
 
+  
   // walk down the 3-level page table hierarchy
   // start at level 2 (root), walk down to level 0 (leaf)
   for(int current_page_table_level = 2; current_page_table_level > 0; current_page_table_level--) {
     // get pointer to page table entry for this level
     // PX() extracts the appropriate 9-bit index from virtual address
+    // remember that page_table_root is a array of PTEs always -> int64 pointers
+    // selects the actual PTE (64 bits)
+    // recall that PTE actual value stores flags, PPN
+    // this is just a pointer to the PTE still
     pte_t* current_level_page_table_entry = &page_table_root[PX(current_page_table_level, virtual_address)];
     
+    // check actual value of PTE (64 bits)
     if(*current_level_page_table_entry & PTE_V) {
       // page table entry is valid - extract physical address of next level
+      // PTE2PA extracts physical addr bits
+      // get the physical addr of the NEXT page table
       page_table_root = (pagetable_t)PTE2PA(*current_level_page_table_entry);
     } 
     else {
-      // page table entry is invalid - need to allocate new page table
+      // page table entry is invalid - signal that w need to allocate new page table
       if(!should_allocate_missing_tables || (page_table_root = (pde_t*)kalloc()) == 0){
         printf("not allocating page table bcz invalid entry");
         return 0; // allocation failed or not requested
@@ -157,7 +167,7 @@ pte_t * walk_page_table(pagetable_t page_table_root, uint64 virtual_address, int
     }
   }
   
-  // return pointer to final level-0 page table entry that maps the virtual address
+  // return pointer to final level-0 page table entry that maps the virtual address (pointer meaning pointer to a 64 bit PTE)
   return &page_table_root[PX(0, virtual_address)];
 }
 
@@ -185,7 +195,7 @@ walkaddr(pagetable_t pagetable, uint64 va)
 }
 
 // add a mapping to the kernel page table
-// only used when booting.
+// only used when booting
 // does not flush TLB or enable paging
 void map_kernel_virtual_to_physical(pagetable_t kernel_page_table, uint64 virtual_address, uint64 physical_address, uint64 mapping_size, int page_permissions)
 {
@@ -229,7 +239,7 @@ int create_page_table_mappings(pagetable_t page_table, uint64 virtual_address_st
     }
     
     // create the mapping by setting the page table entry
-    // PA2PTE converts physical address to page table entry format
+    // PA2PTE converts physical address to PTE format
     // combine with permissions and valid bit
     *current_page_table_entry = PA2PTE(physical_address_start) | page_permissions | PTE_V;
     
@@ -241,6 +251,7 @@ int create_page_table_mappings(pagetable_t page_table, uint64 virtual_address_st
     // advance to next page
     current_virtual_address += PGSIZE;  // move to next 4KB virtual page
     physical_address_start += PGSIZE;   // move to next 4KB physical page
+    // even though these are incremented by the same, these are NOT guruanteed to be next to eachother
   }
   return 0;
 }

@@ -38,6 +38,7 @@ struct spinlock wait_lock;
 // allocate a page for each process's kernel stack
 // map it high in memory, followed by an invalid guard page
 // called during kernel initialization to set up kernel stacks
+// x
 void allocate_and_map_process_kernel_stacks(pagetable_t kernel_page_table)
 {
   struct proc *current_process;
@@ -46,6 +47,7 @@ void allocate_and_map_process_kernel_stacks(pagetable_t kernel_page_table)
   for(current_process = proc; current_process < &proc[NPROC]; current_process++) {
     // allocate one physical page for this process's kernel stack
     char *allocated_stack_physical_address = kalloc();
+    // error returned as val 0
     if(allocated_stack_physical_address == 0)
       panic("kalloc");
       
